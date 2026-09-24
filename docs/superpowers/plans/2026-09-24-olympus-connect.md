@@ -280,7 +280,7 @@ git commit -m "feat: diag.py e referto della verifica sul campo con E-M10 Mark I
 
 - [ ] **Step 5: Aggiornare la spec se un'assunzione è caduta**
 
-Se il referto smentisce un'assunzione della spec, correggere la sezione *Assunzioni da verificare* di `docs/superpowers/specs/2026-09-24-olympus-connect-design.md` con il fatto accertato, e committare separatamente. Non lasciare la spec in contraddizione con il referto.
+Se il referto smentisce un'assunzione della spec, correggere la sezione *Fatti accertati sul campo* di `docs/superpowers/specs/2026-09-24-olympus-connect-design.md` con il fatto accertato, e committare separatamente. Non lasciare la spec in contraddizione con il referto. **Fatto il 2026-09-24:** l'ipotesi sullo `User-Agent` è stata smentita e la spec è stata riscritta di conseguenza.
 
 ---
 
@@ -3441,7 +3441,8 @@ Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 
 - [ ] la barra di stato mostra lo stato corretto **prima** di collegarsi alla fotocamera
 - [ ] "Connetti" chiede SSID e password la prima volta, e non le richiede la seconda
-- [ ] **la connessione Internet resta funzionante** mentre si è collegati alla fotocamera (`ping -c1 1.1.1.1` da un altro terminale) — è la verifica di `ipv4.never-default`
+- [ ] `ipv4.never-default yes` risulta impostato sul profilo (`nmcli connection show olympus-connect-<ssid> | grep never-default`), e la connessione alla fotocamera **non** compare come default route (`ip route show default`)
+- [ ] *(solo con una seconda interfaccia attiva: cavo ethernet, tethering USB o dongle Wi-Fi)* la connessione Internet resta funzionante mentre si è collegati alla fotocamera: `ping -c1 1.1.1.1`. **Con una sola scheda Wi-Fi questo test non è eseguibile** e non indica un difetto: `never-default` evita che la fotocamera prenda la default route, ma non può creare un secondo percorso che non esiste
 - [ ] l'elenco si popola e la barra di stato riporta "N da scaricare, M già presenti"
 - [ ] le miniature compaiono scorrendo, e la finestra **non si blocca** durante il caricamento
 - [ ] i filtri JPEG / RAW / Video / Solo non scaricati riducono la griglia come previsto

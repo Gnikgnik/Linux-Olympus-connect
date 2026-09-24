@@ -196,7 +196,7 @@ Seriale per costruzione: accetta un job alla volta, la coda vive nel worker.
 
 ### `gui/`
 
-- `main_window.py` — toolbar (Connetti / Aggiorna / Scarica selezionati / cartella destinazione), status bar col modello della fotocamera, pannello progressi con avanzamento per file e totale più i pulsanti **Annulla** e **Riprendi** (quest'ultimo attivo quando la coda è in pausa per `CameraAsleep`). Filtri per tipo (JPEG/RAW/MOV) e "solo non scaricati". `QSettings` per cartella di destinazione, SSID e filtri; destinazione predefinita `~/Immagini/Olympus`.
+- `main_window.py` — toolbar (Connetti / Aggiorna / Scarica selezionati / cartella destinazione), status bar col modello della fotocamera, pannello progressi con avanzamento per file e totale più i pulsanti **Annulla** e **Riprova** (quest'ultimo attivo quando la coda è in pausa per `CameraAsleep`). Filtri per tipo (JPEG/RAW/MOV) e "solo non scaricati". `QSettings` per cartella di destinazione, SSID e filtri; destinazione predefinita `~/Immagini/Olympus`.
 - `grid.py` — `QListView` in `IconMode` con modello custom sulla lista di `MediaFile`. Virtualizza: 2000 foto non creano 2000 widget; le miniature si richiedono solo per le righe visibili, in coda seriale.
 - `workers.py` — `ListWorker`, `ThumbWorker`, `DownloadWorker`: `QObject` spostati su `QThread`, che avvolgono le chiamate al core ed emettono signal. Il core non importa Qt.
 
