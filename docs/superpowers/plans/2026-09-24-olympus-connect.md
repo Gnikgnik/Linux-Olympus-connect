@@ -328,10 +328,10 @@ testpaths = ["tests"]
 - [ ] **Step 2: Installare le dipendenze di sviluppo**
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev]'
+python3 -m venv --system-site-packages .venv && .venv/bin/pip install -q -e '.[dev]'
 ```
 
-Nota: `PyQt6` e `requests` sono già installati a livello di sistema, ma il venv li reinstalla per isolamento. Se l'installazione di PyQt6 nel venv fosse lenta o problematica, creare il venv con `--system-site-packages` e installare solo `pytest requests-mock`.
+`PyQt6`, `requests` e `pytest` sono già presenti a livello di sistema, quindi il venv li riusa con `--system-site-packages` invece di ricompilare PyQt6. Conseguenza: **nel venv non esiste lo script `.venv/bin/pytest`**, perché pip non lo installa per un pacchetto che già risolve. Tutti i comandi di test di questo piano usano quindi `.venv/bin/python -m pytest`, che funziona in entrambi i casi.
 
 - [ ] **Step 3: Scrivere i test che falliscono**
 
@@ -348,8 +348,8 @@ from olympus_connect.core.model import (
 
 
 def test_decode_fat_datetime_reference_value():
-    # 19594 = 2018-04-10, 45820 = 22:23:44 (secondi in unità da 2)
-    assert decode_fat_datetime(19594, 45820) == datetime(2018, 4, 10, 22, 23, 44)
+    # 19594 = 2018-04-10, 45820 = 22:23:56 (secondi in unità da 2)
+    assert decode_fat_datetime(19594, 45820) == datetime(2018, 4, 10, 22, 23, 56)
 
 
 def test_decode_fat_datetime_epoch_is_1980():
@@ -452,7 +452,7 @@ def test_parse_imglist_keeps_file_with_invalid_date():
 
 - [ ] **Step 4: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_model.py -v`
+Run: `.venv/bin/python -m pytest tests/test_model.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect'`
 
 - [ ] **Step 5: Implementare `model.py`**
@@ -569,7 +569,7 @@ def parse_imglist(text: str) -> tuple[list[MediaFile], list[str]]:
 
 - [ ] **Step 6: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_model.py -v`
+Run: `.venv/bin/python -m pytest tests/test_model.py -v`
 Atteso: PASS, 14 test
 
 - [ ] **Step 7: Verificare il parsing contro la fixture reale**
@@ -827,7 +827,7 @@ def test_connect_parses_real_camera_fixtures(requests_mock, fixture_bytes):
 
 - [ ] **Step 4: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_protocol.py -v`
+Run: `.venv/bin/python -m pytest tests/test_protocol.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect.core.protocol'`
 
 - [ ] **Step 5: Implementare `protocol.py`**
@@ -984,7 +984,7 @@ class OlympusClient:
 
 - [ ] **Step 6: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_protocol.py -v`
+Run: `.venv/bin/python -m pytest tests/test_protocol.py -v`
 Atteso: PASS. Il test `test_connect_parses_real_camera_fixtures` passa se Task 0 è stato eseguito, altrimenti è `SKIPPED` — se è SKIPPED, **fermarsi**: significa che non stiamo validando contro la fotocamera reale.
 
 - [ ] **Step 7: Commit**
@@ -1061,7 +1061,7 @@ def test_open_stream_raises_protocol_error_on_404(requests_mock):
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_protocol.py -k open_stream -v`
+Run: `.venv/bin/python -m pytest tests/test_protocol.py -k open_stream -v`
 Atteso: FAIL con `ImportError: cannot import name 'Stream'`
 
 - [ ] **Step 3: Implementare `Stream` e `open_stream`**
@@ -1127,7 +1127,7 @@ E come metodo di `OlympusClient`:
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_protocol.py -v`
+Run: `.venv/bin/python -m pytest tests/test_protocol.py -v`
 Atteso: PASS, tutti
 
 - [ ] **Step 5: Commit**
@@ -1225,7 +1225,7 @@ def test_pending_orders_smallest_first(tmp_path):
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_downloader.py -v`
+Run: `.venv/bin/python -m pytest tests/test_downloader.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect.core.downloader'`
 
 - [ ] **Step 3: Implementare la parte di pianificazione**
@@ -1292,7 +1292,7 @@ def pending(jobs: Iterable[Job]) -> list[Job]:
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_downloader.py -v`
+Run: `.venv/bin/python -m pytest tests/test_downloader.py -v`
 Atteso: PASS, 6 test
 
 - [ ] **Step 5: Commit**
@@ -1547,7 +1547,7 @@ def test_download_backs_off_with_expected_delays(tmp_path):
 
 - [ ] **Step 3: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_downloader.py -v`
+Run: `.venv/bin/python -m pytest tests/test_downloader.py -v`
 Atteso: FAIL con `ImportError: cannot import name 'Outcome'`
 
 - [ ] **Step 4: Implementare `download()`**
@@ -1653,12 +1653,12 @@ def _attempt(
 
 - [ ] **Step 5: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_downloader.py -v`
+Run: `.venv/bin/python -m pytest tests/test_downloader.py -v`
 Atteso: PASS, tutti
 
 - [ ] **Step 6: Eseguire l'intera suite**
 
-Run: `.venv/bin/pytest -v`
+Run: `.venv/bin/python -m pytest -v`
 Atteso: PASS, nessuno SKIPPED tra i test che usano le fixture reali
 
 - [ ] **Step 7: Commit**
@@ -1845,7 +1845,7 @@ def test_diagnose_raises_network_unavailable_when_nmcli_missing():
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_network.py -v`
+Run: `.venv/bin/python -m pytest tests/test_network.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect.core.network'`
 
 - [ ] **Step 3: Implementare la parte diagnostica di `network.py`**
@@ -2026,7 +2026,7 @@ class CameraNetwork:
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_network.py -v`
+Run: `.venv/bin/python -m pytest tests/test_network.py -v`
 Atteso: PASS, 8 test
 
 - [ ] **Step 5: Verificare la diagnostica sul sistema reale**
@@ -2157,7 +2157,7 @@ def test_disconnect_brings_profile_down():
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_network.py -k profile -v`
+Run: `.venv/bin/python -m pytest tests/test_network.py -k profile -v`
 Atteso: FAIL con `AttributeError: 'CameraNetwork' object has no attribute 'profile_name'`
 
 - [ ] **Step 3: Implementare la gestione del profilo**
@@ -2240,7 +2240,7 @@ PROFILE_SETTINGS = [
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/pytest tests/test_network.py -v`
+Run: `.venv/bin/python -m pytest tests/test_network.py -v`
 Atteso: PASS, tutti
 
 - [ ] **Step 5: Verificare `ensure_profile` contro `nmcli` reale**
@@ -2486,7 +2486,7 @@ def test_download_worker_cancel_stops_queue(qapp, tmp_path, monkeypatch):
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `.venv/bin/pytest tests/test_workers.py -v`
+Run: `.venv/bin/python -m pytest tests/test_workers.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect.gui'`
 
 - [ ] **Step 3: Implementare `workers.py`**
@@ -2646,13 +2646,13 @@ class DownloadWorker(QObject):
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
 
-Run: `.venv/bin/xvfb-run -a pytest tests/test_workers.py -v` (oppure senza `xvfb-run` se c'è un display)
+Run: `xvfb-run -a .venv/bin/python -m pytest tests/test_workers.py -v` (oppure senza `xvfb-run` se c'è un display)
 Atteso: PASS, tutti
 
 Se `QApplication` non parte in ambiente headless, impostare `QT_QPA_PLATFORM=offscreen`:
 
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_workers.py -v
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_workers.py -v
 ```
 
 - [ ] **Step 5: Commit**
@@ -2775,7 +2775,7 @@ def test_model_visible_jobs_respects_filter(qapp):
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_grid.py -v`
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_grid.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect.gui.grid'`
 
 - [ ] **Step 3: Implementare `grid.py`**
@@ -2931,7 +2931,7 @@ class MediaGrid(QListView):
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_grid.py -v`
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_grid.py -v`
 Atteso: PASS, 9 test
 
 - [ ] **Step 5: Commit**
@@ -3067,7 +3067,7 @@ def test_summary_counts_new_and_present(qapp, settings, tmp_path):
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_main_window.py -v`
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_main_window.py -v`
 Atteso: FAIL con `ModuleNotFoundError: No module named 'olympus_connect.gui.main_window'`
 
 - [ ] **Step 3: Implementare `main_window.py`**
@@ -3407,12 +3407,12 @@ if __name__ == "__main__":
 
 - [ ] **Step 5: Eseguire i test per verificare che passino**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/test_main_window.py -v`
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/test_main_window.py -v`
 Atteso: PASS, 6 test
 
 - [ ] **Step 6: Eseguire l'intera suite**
 
-Run: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest -v`
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -v`
 Atteso: PASS, tutta la suite
 
 - [ ] **Step 7: Commit**
