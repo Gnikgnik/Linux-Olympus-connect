@@ -5,3 +5,4 @@ __pycache__/
 *.part
 diag-report*.txt
 diag-downloads/
+*.egg-info/

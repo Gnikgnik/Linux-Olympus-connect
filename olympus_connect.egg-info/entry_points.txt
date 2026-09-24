@@ -1,2 +1,0 @@
-[console_scripts]
-olympus-connect = olympus_connect.__main__:main

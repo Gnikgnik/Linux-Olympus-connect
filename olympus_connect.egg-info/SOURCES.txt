@@ -1,9 +1,0 @@
-pyproject.toml
-olympus_connect/__init__.py
-olympus_connect.egg-info/PKG-INFO
-olympus_connect.egg-info/SOURCES.txt
-olympus_connect.egg-info/dependency_links.txt
-olympus_connect.egg-info/entry_points.txt
-olympus_connect.egg-info/requires.txt
-olympus_connect.egg-info/top_level.txt
-olympus_connect/core/__init__.py

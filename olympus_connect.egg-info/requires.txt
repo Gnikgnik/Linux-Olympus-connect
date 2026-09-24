@@ -1,6 +1,0 @@
-requests
-PyQt6
-
-[dev]
-pytest
-requests-mock
