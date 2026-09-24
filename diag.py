@@ -338,6 +338,12 @@ def run() -> int:
 
 
 def main() -> int:
+    from datetime import datetime
+
+    # Copia con marca temporale oltre al referto "corrente": ogni esecuzione
+    # avviene offline e il suo output è un dato che non va perso.
+    stamped = REPORT.with_name(f"diag-report-{datetime.now():%Y%m%d-%H%M%S}.txt")
+
     tee = Tee(REPORT)
     sys.stdout = tee
     try:
@@ -350,7 +356,8 @@ def main() -> int:
     finally:
         sys.stdout = sys.__stdout__
         tee.close()
-        print(f"\nReferto completo salvato in {REPORT}")
+        stamped.write_bytes(REPORT.read_bytes())
+        print(f"\nReferto salvato in {REPORT} e in {stamped}")
 
 
 if __name__ == "__main__":

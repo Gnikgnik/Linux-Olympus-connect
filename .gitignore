@@ -3,5 +3,5 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.part
-diag-report.txt
+diag-report*.txt
 diag-downloads/
