@@ -62,7 +62,9 @@ Ogni task eredita implicitamente questi vincoli.
 - Consumes: niente
 - Produces: `tests/fixtures/commandlist.xml`, `tests/fixtures/caminfo.xml`, `tests/fixtures/imglist_dcim.csv`, `tests/fixtures/imglist_100olymp.csv`, più il referto `docs/field-report-2026-09-24.md` che registra le risposte alle tre domande aperte.
 
-- [ ] **Step 1: Creare `diag.py`**
+- [x] **Step 1: Creare `diag.py`**
+
+> **Eseguito.** Il file in `diag.py` è la versione autorevole e differisce dalla bozza qui sotto in due punti, corretti dopo verifica empirica sul sistema reale: il gradino della rotta verifica che l'indirizzo sia **on-link** (assenza di ` via `) invece che l'esito di `ip route get`, e l'SSID attivo si legge da `nmcli device show` invece che dal campo `ACTIVE` di `nmcli device wifi`, inaffidabile. Le stesse due correzioni sono state applicate al Task 6. La bozza resta per tracciabilità.
 
 ```python
 #!/usr/bin/env python3
@@ -1576,8 +1578,15 @@ git commit -m "feat(core): trasferimento con ripresa via Range e rename atomico"
   - `Rung(name: str, ok: bool, detail: str)` — dataclass
   - `Diagnosis(rungs: list[Rung])` con proprietà `ok: bool` e `problem: str | None` (il nome del primo gradino fallito)
   - `CameraNetwork(ssid: str = "", runner: Runner = run_command, probe_tcp: Callable[[], bool] = ...)`
-  - `CameraNetwork.active_ssid() -> str | None`
+  - `CameraNetwork.wifi_devices() -> list[str]`
+  - `CameraNetwork.active_connection(device: str) -> str | None`
+  - `CameraNetwork.is_onlink() -> tuple[bool, str]`
   - `CameraNetwork.diagnose() -> Diagnosis`
+
+**Due correzioni rispetto alla prima stesura, verificate empiricamente durante il Task 0:**
+
+1. **Il gradino della rotta va verificato come «on-link», non come «esiste».** `ip route get 192.168.0.10` riesce sempre, perché la default route del router di casa copre qualunque indirizzo: l'output misurato sul sistema reale era `192.168.0.10 via 192.168.1.254 dev wlan0`, identico alla rotta verso `8.8.8.8`. Il gradino passerebbe proprio nello stato che deve rilevare. La verifica corretta è l'assenza di ` via ` nella rotta: quando si è sull'AP della fotocamera la consegna è diretta.
+2. **`nmcli -t -f ACTIVE,SSID device wifi` non è affidabile.** Sul sistema reale riportava `no:` per tutte le reti pur essendo connessi. Sostituito con `nmcli -t -f GENERAL.CONNECTION,GENERAL.STATE device show <dev>`, che restituisce il nome del profilo attivo e lo stato `100 (connected)`. Il valore è il nome del *profilo* NetworkManager, non l'SSID: il confronto va fatto sia contro l'SSID sia contro `profile_name`, perché collegandosi col nostro profilo il nome è `olympus-connect-<ssid>`.
 
 - [ ] **Step 1: Scrivere i test che falliscono**
 
@@ -1591,6 +1600,15 @@ from olympus_connect.core.network import (
 
 DEVICES_WITH_WIFI = "wlan0:wifi:connected\neth0:ethernet:unavailable\n"
 DEVICES_NO_WIFI = "eth0:ethernet:connected\n"
+
+# Output reale di `nmcli -t -f GENERAL.CONNECTION,GENERAL.STATE device show wlan0`
+CONNECTED_TO = "GENERAL.CONNECTION:{name}\nGENERAL.STATE:100 (connected)\n"
+DISCONNECTED = "GENERAL.CONNECTION:\nGENERAL.STATE:30 (disconnected)\n"
+
+# Output reale di `ip -o route get 192.168.0.10`, misurato sul sistema.
+ONLINK = "192.168.0.10 dev wlan0 src 192.168.0.11 uid 1000 \\    cache\n"
+VIA_GATEWAY = ("192.168.0.10 via 192.168.1.254 dev wlan0 "
+               "src 192.168.1.74 uid 1000 \\    cache\n")
 
 
 def fake_runner(responses: dict[str, CommandResult]):
@@ -1613,23 +1631,45 @@ def ok(stdout=""):
     return CommandResult(0, stdout, "")
 
 
-def test_active_ssid_reads_nmcli_output():
-    runner = fake_runner({"device wifi": ok("no:casa-5G\nyes:OM-D E-M10 IV\n")})
-    assert CameraNetwork(runner=runner).active_ssid() == "OM-D E-M10 IV"
+def runner_for(*, devices=DEVICES_WITH_WIFI, connection="OM-D E-M10 IV",
+               route=ONLINK):
+    return fake_runner({
+        "-f DEVICE,TYPE,STATE": ok(devices),
+        "device show": ok(CONNECTED_TO.format(name=connection)
+                          if connection else DISCONNECTED),
+        "route get": ok(route),
+    })
 
 
-def test_active_ssid_is_none_when_nothing_active():
-    runner = fake_runner({"device wifi": ok("no:casa-5G\n")})
-    assert CameraNetwork(runner=runner).active_ssid() is None
+def test_active_connection_reads_device_show():
+    runner = runner_for(connection="OM-D E-M10 IV")
+    assert CameraNetwork(runner=runner).active_connection("wlan0") == "OM-D E-M10 IV"
+
+
+def test_active_connection_is_none_when_device_disconnected():
+    runner = runner_for(connection=None)
+    assert CameraNetwork(runner=runner).active_connection("wlan0") is None
+
+
+def test_is_onlink_true_for_direct_route():
+    net = CameraNetwork(runner=runner_for(route=ONLINK))
+    onlink, detail = net.is_onlink()
+    assert onlink
+    assert "192.168.0.10" in detail
+
+
+def test_is_onlink_false_when_route_goes_through_gateway():
+    # Il difetto che questo test blocca: `ip route get` riesce sempre grazie
+    # alla default route, quindi il solo codice di ritorno segnalerebbe OK
+    # mentre il PC è ancora sul Wi-Fi di casa.
+    net = CameraNetwork(runner=runner_for(route=VIA_GATEWAY))
+    onlink, detail = net.is_onlink()
+    assert not onlink
+    assert "192.168.1.254" in detail
 
 
 def test_diagnose_all_green():
-    runner = fake_runner({
-        "device wifi": ok("yes:OM-D E-M10 IV\n"),
-        "-f DEVICE,TYPE,STATE": ok(DEVICES_WITH_WIFI),
-        "ip route get": ok("192.168.0.10 dev wlan0 src 192.168.0.11\n"),
-    })
-    net = CameraNetwork(ssid="OM-D E-M10 IV", runner=runner,
+    net = CameraNetwork(ssid="OM-D E-M10 IV", runner=runner_for(),
                         probe_tcp=lambda: True)
     diagnosis = net.diagnose()
     assert diagnosis.ok
@@ -1637,45 +1677,51 @@ def test_diagnose_all_green():
 
 
 def test_diagnose_reports_missing_wifi_device_first():
-    runner = fake_runner({"-f DEVICE,TYPE,STATE": ok(DEVICES_NO_WIFI)})
-    diagnosis = CameraNetwork(runner=runner, probe_tcp=lambda: False).diagnose()
+    net = CameraNetwork(runner=runner_for(devices=DEVICES_NO_WIFI),
+                        probe_tcp=lambda: False)
+    diagnosis = net.diagnose()
     assert not diagnosis.ok
     assert diagnosis.problem == "dispositivo Wi-Fi"
 
 
 def test_diagnose_reports_wrong_network_and_names_it():
-    runner = fake_runner({
-        "-f DEVICE,TYPE,STATE": ok(DEVICES_WITH_WIFI),
-        "device wifi": ok("yes:casa-5G\n"),
-    })
-    net = CameraNetwork(ssid="OM-D E-M10 IV", runner=runner,
-                       probe_tcp=lambda: False)
+    net = CameraNetwork(ssid="OM-D E-M10 IV",
+                        runner=runner_for(connection="casa-5G",
+                                          route=VIA_GATEWAY),
+                        probe_tcp=lambda: False)
     diagnosis = net.diagnose()
     assert diagnosis.problem == "rete della fotocamera"
-    # Il messaggio deve dire a quale rete si è effettivamente collegati.
-    assert "casa-5G" in dict((r.name, r.detail) for r in diagnosis.rungs)["rete della fotocamera"]
+    detail = {r.name: r.detail for r in diagnosis.rungs}["rete della fotocamera"]
+    assert "casa-5G" in detail   # deve dire a quale rete si è collegati
 
 
-def test_diagnose_reports_tcp_failure_when_route_exists():
-    runner = fake_runner({
-        "-f DEVICE,TYPE,STATE": ok(DEVICES_WITH_WIFI),
-        "device wifi": ok("yes:OM-D E-M10 IV\n"),
-        "ip route get": ok("192.168.0.10 dev wlan0\n"),
-    })
-    net = CameraNetwork(ssid="OM-D E-M10 IV", runner=runner,
-                       probe_tcp=lambda: False)
+def test_diagnose_accepts_connection_via_our_own_profile():
+    # Collegandosi col nostro profilo il nome attivo è olympus-connect-<ssid>,
+    # non l'SSID: non deve essere confuso con «rete sbagliata».
+    net = CameraNetwork(ssid="CAM",
+                        runner=runner_for(connection="olympus-connect-CAM"),
+                        probe_tcp=lambda: True)
+    assert net.diagnose().ok
+
+
+def test_diagnose_reports_route_not_onlink_before_tcp():
+    net = CameraNetwork(ssid="OM-D E-M10 IV",
+                        runner=runner_for(route=VIA_GATEWAY),
+                        probe_tcp=lambda: False)
+    assert net.diagnose().problem == "fotocamera sulla rete locale"
+
+
+def test_diagnose_reports_tcp_failure_when_onlink():
+    net = CameraNetwork(ssid="OM-D E-M10 IV", runner=runner_for(),
+                        probe_tcp=lambda: False)
     assert net.diagnose().problem == "porta 80 della fotocamera"
 
 
 def test_diagnose_skips_ssid_rung_when_ssid_unknown():
     # Senza SSID configurato non si può verificare di essere sulla rete giusta;
     # il gradino non va inventato, va omesso.
-    runner = fake_runner({
-        "-f DEVICE,TYPE,STATE": ok(DEVICES_WITH_WIFI),
-        "device wifi": ok("yes:qualcosa\n"),
-        "ip route get": ok("192.168.0.10 dev wlan0\n"),
-    })
-    net = CameraNetwork(ssid="", runner=runner, probe_tcp=lambda: True)
+    net = CameraNetwork(ssid="", runner=runner_for(connection="qualcosa"),
+                        probe_tcp=lambda: True)
     names = [r.name for r in net.diagnose().rungs]
     assert "rete della fotocamera" not in names
 
@@ -1715,6 +1761,7 @@ from .errors import NetworkUnavailable
 CAMERA_IP = "192.168.0.10"
 CAMERA_PORT = 80
 COMMAND_TIMEOUT = 10
+PROFILE_PREFIX = "olympus-connect-"
 
 
 @dataclass(frozen=True)
@@ -1773,6 +1820,11 @@ class CameraNetwork:
         self._run = runner
         self._probe_tcp = probe_tcp
 
+    @property
+    def profile_name(self) -> str:
+        """Il nostro profilo NetworkManager. Non tocchiamo nessun altro profilo."""
+        return f"{PROFILE_PREFIX}{self.ssid}"
+
     def _nmcli(self, *args: str) -> CommandResult:
         try:
             return self._run(["nmcli", *args])
@@ -1784,22 +1836,47 @@ class CameraNetwork:
         except subprocess.TimeoutExpired as exc:
             raise NetworkUnavailable("nmcli non ha risposto entro 10 secondi.") from exc
 
-    def _wifi_devices(self) -> list[str]:
+    def wifi_devices(self) -> list[str]:
         result = self._nmcli("-t", "-f", "DEVICE,TYPE,STATE", "device")
-        return [ln for ln in result.stdout.splitlines() if ":wifi:" in ln]
+        return [ln.split(":")[0] for ln in result.stdout.splitlines()
+                if ":wifi:" in ln]
 
-    def active_ssid(self) -> str | None:
-        result = self._nmcli("-t", "-f", "ACTIVE,SSID", "device", "wifi")
+    def active_connection(self, device: str) -> str | None:
+        """Nome del profilo NetworkManager attivo sul dispositivo, se connesso.
+
+        Il campo ACTIVE di `nmcli device wifi` riporta 'no' per tutte le reti
+        anche quando una è connessa, quindi non è utilizzabile: si legge
+        invece GENERAL.CONNECTION da `nmcli device show`.
+        """
+        result = self._nmcli("-t", "-f", "GENERAL.CONNECTION,GENERAL.STATE",
+                             "device", "show", device)
+        name, state = None, ""
         for line in result.stdout.splitlines():
-            if line.startswith("yes:"):
-                return line.split(":", 1)[1]
-        return None
+            key, _, value = line.partition(":")
+            if key == "GENERAL.CONNECTION":
+                name = value or None
+            elif key == "GENERAL.STATE":
+                state = value
+        return name if state.startswith("100") else None
+
+    def is_onlink(self) -> tuple[bool, str]:
+        """La fotocamera è raggiungibile direttamente, senza gateway?
+
+        `ip route get` riesce sempre grazie alla default route, quindi il
+        codice di ritorno non distingue «sono sull'AP della fotocamera» da
+        «sono sul Wi-Fi di casa». La differenza è la presenza di ' via '.
+        """
+        result = self._run(["ip", "-o", "route", "get", CAMERA_IP])
+        route = " ".join(result.stdout.split())
+        if result.returncode != 0:
+            return False, result.stderr.strip() or "nessuna rotta"
+        return " via " not in f" {route} ", route
 
     def diagnose(self) -> Diagnosis:
         """Un gradino per ogni causa distinta, dalla più a monte alla più a valle."""
         rungs: list[Rung] = []
 
-        devices = self._wifi_devices()
+        devices = self.wifi_devices()
         rungs.append(Rung(
             "dispositivo Wi-Fi", bool(devices),
             ", ".join(devices) if devices else "nessuna interfaccia Wi-Fi trovata",
@@ -1807,21 +1884,28 @@ class CameraNetwork:
         if not devices:
             return Diagnosis(rungs)
 
+        active = next(
+            (c for c in (self.active_connection(d) for d in devices) if c), None
+        )
+
         if self.ssid:
-            active = self.active_ssid()
+            # Collegandosi col nostro profilo il nome attivo è il profilo,
+            # non l'SSID: entrambi valgono come «rete giusta».
+            on_camera = active in (self.ssid, self.profile_name)
             rungs.append(Rung(
-                "rete della fotocamera", active == self.ssid,
+                "rete della fotocamera", on_camera,
                 f"collegato a «{active}»" if active else "nessuna rete Wi-Fi attiva",
             ))
-            if active != self.ssid:
+            if not on_camera:
                 return Diagnosis(rungs)
 
-        route = self._run(["ip", "route", "get", CAMERA_IP])
+        onlink, route = self.is_onlink()
         rungs.append(Rung(
-            f"rotta verso {CAMERA_IP}", route.returncode == 0,
-            route.stdout.strip() or route.stderr.strip(),
+            "fotocamera sulla rete locale", onlink,
+            route if onlink else
+            f"la rotta passa da un gateway: {route}",
         ))
-        if route.returncode != 0:
+        if not onlink:
             return Diagnosis(rungs)
 
         reachable = self._probe_tcp()
@@ -1866,9 +1950,8 @@ git commit -m "feat(core): scala diagnostica della connessione alla fotocamera"
 - Test: `tests/test_network.py`
 
 **Interfaces:**
-- Consumes: `CameraNetwork`, `Runner`, `CommandResult` da Task 6
+- Consumes: `CameraNetwork`, `Runner`, `CommandResult`, `profile_name`, `PROFILE_PREFIX` da Task 6
 - Produces:
-  - `CameraNetwork.profile_name -> str` — `f"olympus-connect-{ssid}"`
   - `CameraNetwork.profile_exists() -> bool`
   - `CameraNetwork.ensure_profile(password: str | None = None) -> None`
   - `CameraNetwork.connect() -> None`
@@ -1973,9 +2056,8 @@ Atteso: FAIL con `AttributeError: 'CameraNetwork' object has no attribute 'profi
 - [ ] **Step 3: Implementare la gestione del profilo**
 
 ```python
-# da aggiungere a olympus_connect/core/network.py, come metodi di CameraNetwork
-
-PROFILE_PREFIX = "olympus-connect-"
+# da aggiungere a olympus_connect/core/network.py
+# (PROFILE_PREFIX e profile_name sono già definiti dal Task 6)
 
 # Impostazioni che rendono usabile l'AP della fotocamera su Linux:
 # never-default evita che la fotocamera diventi la default route (perdita
@@ -1990,10 +2072,6 @@ PROFILE_SETTINGS = [
 ```
 
 ```python
-    @property
-    def profile_name(self) -> str:
-        return f"{PROFILE_PREFIX}{self.ssid}"
-
     def _checked(self, *args: str) -> CommandResult:
         result = self._nmcli(*args)
         if result.returncode != 0:
