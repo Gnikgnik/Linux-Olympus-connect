@@ -29,6 +29,31 @@ UA = {"User-Agent": "OI.Share v2", "Host": "192.168.0.10"}
 TIMEOUT = (3, 15)
 CHUNK = 65536
 FIXTURES = Path("tests/fixtures")
+REPORT = Path("diag-report.txt")
+
+
+class Tee:
+    """Scrive contemporaneamente su stdout e sul file di referto.
+
+    Questo strumento viene eseguito mentre il PC è collegato all'access point
+    della fotocamera e quindi senza rete: l'output è l'unico risultato del
+    test, e non deve poter andare perso.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._handle = path.open("w", encoding="utf-8")
+
+    def write(self, text: str) -> int:
+        sys.__stdout__.write(text)
+        self._handle.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        sys.__stdout__.flush()
+        self._handle.flush()
+
+    def close(self) -> None:
+        self._handle.close()
 
 
 def step(name: str, ok: bool, detail: str = "") -> bool:
@@ -229,8 +254,10 @@ def probe_downloads(files: list[list[str]]) -> None:
             step(f"Range su {ext}", False, type(exc).__name__)
 
 
-def main() -> int:
-    print("Olympus Connect — diagnostica")
+def run() -> int:
+    from datetime import datetime
+
+    print(f"Olympus Connect — diagnostica ({datetime.now():%Y-%m-%d %H:%M:%S})")
     if not ladder():
         return 1
     try:
@@ -242,6 +269,22 @@ def main() -> int:
     probe_downloads(files)
     print("\nFatto. Fixture in tests/fixtures/, campioni in diag-downloads/.")
     return 0
+
+
+def main() -> int:
+    tee = Tee(REPORT)
+    sys.stdout = tee
+    try:
+        return run()
+    except Exception as exc:                     # il referto deve sopravvivere
+        print(f"\nErrore inatteso: {type(exc).__name__}: {exc}")
+        import traceback
+        traceback.print_exc(file=tee)
+        return 2
+    finally:
+        sys.stdout = sys.__stdout__
+        tee.close()
+        print(f"\nReferto completo salvato in {REPORT}")
 
 
 if __name__ == "__main__":

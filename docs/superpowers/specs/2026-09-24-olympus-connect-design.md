@@ -122,10 +122,16 @@ Ogni richiesta ha `timeout` esplicito: 3 s per il connect, 15 s per il read. Lo 
 
 **Profilo NetworkManager.** Il modulo crea e gestisce solo il profilo `olympus-connect-<ssid>`, quindi non può danneggiare le connessioni esistenti. Impostazioni:
 
-- `ipv4.never-default yes` — non sottrae la default route: Internet resta funzionante durante il download
+- `ipv4.never-default yes` — la connessione alla fotocamera non diventa la default route
 - `ipv6.method disabled`
 - `ipv4.route-metric 900`
 - `connection.autoconnect no`
+
+**Cosa `never-default` fa e cosa non fa.** Impedisce che la fotocamera diventi la default route, quindi il traffico verso Internet continua a essere instradato su un'altra interfaccia — *se esiste*. Sulla macchina di riferimento c'è una sola interfaccia attiva (`wlan0`; `enp0s31f6` è senza cavo), quindi collegarsi alla fotocamera significa comunque restare senza Internet: nessuna configurazione di routing può creare un secondo percorso che non c'è. Il vantaggio reale in quel caso è impedire a NetworkManager di stravolgere la tabella di routing e di riagganciare automaticamente altre reti a metà trasferimento.
+
+Con ethernet collegata, un dongle Wi-Fi USB o il telefono in tethering USB, `never-default` fa esattamente ciò che promette: Internet resta attivo su quell'interfaccia e la fotocamera vive su `wlan0`.
+
+**Conseguenza operativa sullo sviluppo:** durante i test sul campo la macchina è offline. Per questo `diag.py` è uno script autonomo con referto su file (`diag-report.txt`), eseguibile senza assistenza e senza rete.
 
 La password del Wi-Fi resta dentro il profilo NetworkManager: **questo software non la memorizza mai**.
 
