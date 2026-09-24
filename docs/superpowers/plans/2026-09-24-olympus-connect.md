@@ -3461,7 +3461,16 @@ Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 - [ ] rilanciando il download degli stessi file, tutti risultano "già presenti" e nulla viene ritrasferito
 - [ ] chiudendo la finestra durante un download, il processo termina senza errori e senza restare appeso
 
-- [ ] **Step 3: Scrivere il `README.md`**
+- [ ] **Step 3: Prima di pubblicare, anonimizzare le fixture**
+
+`tests/fixtures/caminfo.xml` contiene i numeri di serie reali della fotocamera (`BJGA85301`, `25JGA2208`), e l'SSID dell'access point li include. Decisione del 2026-09-24: si lasciano finché il repository resta locale, **si sostituiscono con valori fittizi prima di qualunque pubblicazione**. Nessun test asserisce sul seriale, quindi la sostituzione è sicura.
+
+```bash
+sed -i 's/BJGA85301/XXXXXXXXX/g; s/25JGA2208/YYYYYYYYY/g' tests/fixtures/caminfo.xml
+.venv/bin/python -m pytest -q   # deve restare verde
+```
+
+- [ ] **Step 4: Scrivere il `README.md`**
 
 Contenuto obbligatorio:
 
