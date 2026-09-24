@@ -301,14 +301,44 @@ def probe_keepalive() -> None:
     la fotocamera.
     """
     print("\n== Keep-alive (set_timeout) ==")
-    for seconds in (300, 600, 1800, 3600):
+
+    def try_timeout(label: str, seconds) -> bool:
         try:
             r = requests.get(f"{BASE}/set_timeout.cgi", headers=UA,
                              params={"timeoutsec": seconds}, timeout=TIMEOUT)
-            step(f"set_timeout timeoutsec={seconds}", r.status_code == 200,
-                 f"HTTP {r.status_code}: {r.text.strip()[:80] or '(vuoto)'}")
+            body = " ".join(r.text.split())
+            return step(f"set_timeout {label}", r.status_code == 200,
+                        f"HTTP {r.status_code}: {body[:90] or '(vuoto)'}")
         except requests.RequestException as exc:
-            step(f"set_timeout timeoutsec={seconds}", False, type(exc).__name__)
+            return step(f"set_timeout {label}", False, type(exc).__name__)
+
+    # In modalità play tutti i valori rispondono HTTP 520 errorcode 1006
+    # (misurato il 2026-09-24). Due ipotesi sul perché, provate qui.
+    print("  -- in modalità play --")
+    for seconds in (300, 1800, 3600):
+        try_timeout(f"timeoutsec={seconds} (play)", seconds)
+
+    print("  -- valori limite, in modalità play --")
+    for value in (0, 1, 60, 65535):
+        try_timeout(f"timeoutsec={value} (play)", value)
+
+    print("  -- in modalità rec --")
+    try:
+        requests.get(f"{BASE}/switch_cammode.cgi", headers=UA,
+                     params={"mode": "rec"}, timeout=TIMEOUT)
+        for seconds in (300, 1800):
+            try_timeout(f"timeoutsec={seconds} (rec)", seconds)
+    except requests.RequestException as exc:
+        step("switch_cammode mode=rec", False, type(exc).__name__)
+    finally:
+        # Tornare sempre in play: è la modalità in cui la fotocamera
+        # elenca i file, e lasciarla in rec confonderebbe l'uso successivo.
+        try:
+            requests.get(f"{BASE}/switch_cammode.cgi", headers=UA,
+                         params={"mode": "play"}, timeout=TIMEOUT)
+            print("  ripristinata modalità play")
+        except requests.RequestException:
+            print("  ATTENZIONE: impossibile ripristinare la modalità play")
 
     try:
         r = requests.get(f"{BASE}/get_unusedcapacity.cgi", headers=UA, timeout=TIMEOUT)

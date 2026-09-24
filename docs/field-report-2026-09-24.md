@@ -108,11 +108,54 @@ Olympus Connect — diagnostica (2026-09-24 21:28:17)
 Fatto. Fixture in tests/fixtures/, campioni in diag-downloads/.
 ```
 
-## Passata 2 — in attesa
+## Passata 2 — miniature e keep-alive
 
-Restano due domande, sondate dalle sezioni *Miniature e anteprime* e *Keep-alive* aggiunte a `diag.py`:
+Eseguita alle 21:55:08 dello stesso giorno. La scala diagnostica, i download e l'esito su `Range` hanno riprodotto identicamente la passata 1.
 
-- **`get_thumbnail` copre gli ORF e i MOV?** È la domanda più importante rimasta: il 98 % dei file sulla scheda è RAW. Se le miniature non coprono gli ORF, una griglia visuale è inutile e il Task 9 va riprogettato prima di essere scritto. Viene sondato anche `get_screennail`, che `caminfo` dichiara disponibile.
-- **Quali valori accetta `set_timeout`?** Provati 300, 600, 1800 e 3600 secondi. È la mitigazione principale per l'assenza di `Range`.
+### Le miniature funzionano su tutti i formati
 
-*(Questa sezione va sostituita con i risultati della passata 2.)*
+```
+[OK] get_thumbnail  .JPG —   8 416 byte, JPEG valido
+[OK] get_thumbnail  .ORF —   9 093 byte, JPEG valido
+[OK] get_thumbnail  .MOV —  12 912 byte, JPEG valido
+[OK] get_screennail .JPG — 161 280 byte, JPEG valido
+[OK] get_screennail .ORF — 1 076 736 byte, JPEG valido
+[OK] get_screennail .MOV — 153 441 byte, JPEG valido
+```
+
+**La domanda più importante ha risposta affermativa.** `get_thumbnail` restituisce un JPEG valido anche per ORF e MOV, quindi la griglia di miniature funziona sul 100 % della scheda — compresi i 1141 RAW che sono il motivo del progetto. Il Task 9 procede come progettato, senza riprogettazioni.
+
+Dimensioni utili per il dimensionamento: le miniature stanno fra 8 e 13 KB, quindi popolare la griglia visibile costa pochissimo. `get_screennail` su ORF restituisce **oltre 1 MB**: ottimo per un'anteprima a schermo grande del singolo file selezionato, decisamente troppo pesante per una griglia. Resta fuori scope per ora, ma è la scelta giusta se in futuro si volesse un pannello di anteprima.
+
+### `set_timeout` non è utilizzabile su questo firmware
+
+```
+[FAIL] set_timeout timeoutsec=300  — HTTP 520: <errorcode>1006</errorcode>
+[FAIL] set_timeout timeoutsec=600  — HTTP 520: <errorcode>1006</errorcode>
+[FAIL] set_timeout timeoutsec=1800 — HTTP 520: <errorcode>1006</errorcode>
+[FAIL] set_timeout timeoutsec=3600 — HTTP 520: <errorcode>1006</errorcode>
+```
+
+Il comando è dichiarato nel `get_commandlist` ma rifiuta tutti i valori provati con `HTTP 520` ed `errorcode 1006`. **La mitigazione che avevo individuato per l'assenza di `Range` non è disponibile.**
+
+Due ipotesi non verificate sul motivo, da provare durante la prova end-to-end del Task 11 invece che in una passata dedicata: il comando potrebbe richiedere la modalità `rec` anziché `play` (la sonda è stata eseguita dopo `switch_cammode mode=play`), oppure accettare solo un insieme ristretto di valori. `diag.py` è stato esteso per coprire entrambe le ipotesi alla prossima esecuzione.
+
+`keep_awake()` resta nel codice: per progetto restituisce `False` e non solleva quando il comando manca o fallisce, quindi il comportamento è già corretto — semplicemente non ottiene nulla su questo firmware.
+
+### `get_unusedcapacity` non è affidabile
+
+```
+[OK] get_unusedcapacity — HTTP 200: <unused>4294967295</unused>
+```
+
+`4294967295` è `0xFFFFFFFF`, cioè `-1` interpretato come intero senza segno: un valore sentinella che significa "non disponibile", non 4 GB liberi. **Non costruire nulla su questo endpoint.**
+
+## Conseguenze finali sul progetto
+
+Con `Range` assente **e** keep-alive non disponibile, il caso peggiore — il MOV da 944 MB — non ha una protezione diretta. Le difese effettive sono tre, tutte già nel piano:
+
+1. **`pending()` ordina dal file più piccolo.** Un'interruzione costa il file in corso, e con questo ordine il file in corso è quasi sempre piccolo: i 1141 ORF da 20 MB si chiudono prima che i MOV grandi entrino in coda.
+2. **Il trasferimento stesso è attività.** Il rischio di standby è concentrato nei periodi di inattività — mentre si scorrono le miniature o si decide cosa scaricare — non durante un `GET` continuo. Questo non elimina le cadute di Wi-Fi, per cui i 3 tentativi con backoff restano.
+3. **`.part` + rename atomico.** Nessun file interrotto prende mai il nome definitivo, quindi la regola dei duplicati resta sicura e un secondo tentativo riprende sempre da uno stato coerente.
+
+**Task 0 chiuso.** Nessuna assunzione della spec resta non verificata.
