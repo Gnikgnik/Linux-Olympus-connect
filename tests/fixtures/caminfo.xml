@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<caminfo>
+<model>E-M10MarkIV</model>
+<HighResolutionSoundPlay>notavailable</HighResolutionSoundPlay>
+<SerialNumberList>
+<Serial1>BJGA85301</Serial1>
+<Serial2>25JGA2208</Serial2>
+</SerialNumberList>
+<GetImageScreennailSupport>available</GetImageScreennailSupport>
+<GetRawImageSupport>available</GetRawImageSupport>
+<BleFunctionDetailList>
+<Func1>BleShutter</Func1>
+</BleFunctionDetailList>
+</caminfo>

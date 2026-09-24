@@ -254,6 +254,70 @@ def probe_downloads(files: list[list[str]]) -> None:
             step(f"Range su {ext}", False, type(exc).__name__)
 
 
+def probe_previews(files: list[list[str]]) -> None:
+    """Le miniature funzionano per RAW e video, non solo per i JPEG?
+
+    Su questa scheda il 98% dei file sono ORF: se get_thumbnail non li
+    copre, una griglia di miniature è inutile e serve un'altra strategia.
+    """
+    print("\n== Miniature e anteprime ==")
+
+    first: dict[str, str] = {}
+    for parts in files:
+        ext = Path(parts[1]).suffix.upper()
+        first.setdefault(ext, f"{parts[0]}/{parts[1]}")
+
+    out = Path("diag-downloads")
+    out.mkdir(exist_ok=True)
+
+    for endpoint in ("get_thumbnail", "get_screennail"):
+        for ext in (".JPG", ".ORF", ".MOV"):
+            camera_path = first.get(ext)
+            if not camera_path:
+                print(f"  [SALTATO] {endpoint} {ext}: nessun file")
+                continue
+            try:
+                r = requests.get(f"{BASE}/{endpoint}.cgi", headers=UA,
+                                 params={"DIR": camera_path}, timeout=TIMEOUT)
+                body = r.content
+                is_jpeg = body[:2] == b"\xff\xd8"
+                step(f"{endpoint} {ext}", r.status_code == 200 and is_jpeg,
+                     f"HTTP {r.status_code}, {len(body)} byte, "
+                     f"{'JPEG valido' if is_jpeg else 'non è un JPEG'}")
+                if r.status_code == 200 and is_jpeg:
+                    (out / f"{endpoint}{ext.lower()}.jpg").write_bytes(body)
+            except requests.RequestException as exc:
+                step(f"{endpoint} {ext}", False, type(exc).__name__)
+
+
+def probe_keepalive() -> None:
+    """set_timeout permette di evitare che la fotocamera si addormenti?
+
+    Senza supporto Range un trasferimento interrotto costa l'intero file, e
+    sulla scheda ci sono video da oltre 900 MB: allungare il timeout di
+    inattività è la mitigazione più efficace disponibile.
+
+    Il valore vale per la sessione Wi-Fi corrente e si azzera spegnendo
+    la fotocamera.
+    """
+    print("\n== Keep-alive (set_timeout) ==")
+    for seconds in (300, 600, 1800, 3600):
+        try:
+            r = requests.get(f"{BASE}/set_timeout.cgi", headers=UA,
+                             params={"timeoutsec": seconds}, timeout=TIMEOUT)
+            step(f"set_timeout timeoutsec={seconds}", r.status_code == 200,
+                 f"HTTP {r.status_code}: {r.text.strip()[:80] or '(vuoto)'}")
+        except requests.RequestException as exc:
+            step(f"set_timeout timeoutsec={seconds}", False, type(exc).__name__)
+
+    try:
+        r = requests.get(f"{BASE}/get_unusedcapacity.cgi", headers=UA, timeout=TIMEOUT)
+        step("get_unusedcapacity", r.status_code == 200,
+             f"HTTP {r.status_code}: {r.text.strip()[:80]}")
+    except requests.RequestException as exc:
+        step("get_unusedcapacity", False, type(exc).__name__)
+
+
 def run() -> int:
     from datetime import datetime
 
@@ -267,6 +331,8 @@ def run() -> int:
         return 1
     print(f"\n  {len(files)} file trovati sulla scheda")
     probe_downloads(files)
+    probe_previews(files)
+    probe_keepalive()
     print("\nFatto. Fixture in tests/fixtures/, campioni in diag-downloads/.")
     return 0
 
