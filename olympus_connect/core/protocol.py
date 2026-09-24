@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ElementTree
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Iterator
 
 import requests
 
 from .errors import CameraAsleep, CameraNotReachable, OlympusError, ProtocolError
-from .model import MediaFile, parse_imglist
+from .model import CHUNK_SIZE, MediaFile, parse_imglist
 
 BASE_URL = "http://192.168.0.10"
 
@@ -24,6 +25,26 @@ HEADERS = {
 }
 
 TIMEOUT = (3, 15)   # (connect, read) in secondi
+
+
+@dataclass
+class Stream:
+    """Un trasferimento in corso.
+
+    resumed è True solo se il server ha risposto 206: è l'unico segnale
+    affidabile che il Range è stato onorato e che si sta riprendendo
+    invece di ricominciare. La E-M10 Mark IV risponde sempre 200, quindi
+    in pratica resumed è sempre False su questa fotocamera.
+    """
+    total: int
+    resumed: bool
+    chunks: Iterator[bytes]
+
+
+def _total_from_content_range(value: str) -> int | None:
+    # "bytes 500-999/1000" -> 1000
+    _, _, denominator = value.partition("/")
+    return int(denominator) if denominator.isdigit() else None
 
 
 class OlympusClient:
@@ -148,3 +169,39 @@ class OlympusClient:
     def thumbnail(self, camera_path: str) -> bytes:
         """Miniatura JPEG. Verificata funzionante su JPG, ORF e MOV (8-13 KB)."""
         return self._get_ok("get_thumbnail.cgi", DIR=camera_path).content
+
+    # -- download ---------------------------------------------------------
+
+    @contextmanager
+    def open_stream(self, camera_path: str, offset: int = 0) -> Iterator[Stream]:
+        """Scarica un file in streaming, opzionalmente riprendendo da offset.
+
+        Il chiamante deve controllare `stream.resumed` prima di appendere a
+        un file parziale: se il server ha ignorato il Range il corpo parte
+        da zero, e appenderlo produrrebbe un file corrotto.
+        """
+        headers = {"Range": f"bytes={offset}-"} if offset else {}
+        response = self._get(camera_path, stream=True, headers=headers)
+        try:
+            if response.status_code not in (200, 206):
+                raise ProtocolError(
+                    f"{camera_path} ha risposto HTTP {response.status_code}.",
+                    response.content,
+                )
+
+            resumed = response.status_code == 206
+            total: int | None = None
+            if resumed:
+                total = _total_from_content_range(
+                    response.headers.get("Content-Range", "")
+                )
+            if total is None:
+                length = response.headers.get("Content-Length")
+                total = int(length) if length and length.isdigit() else 0
+                if resumed:
+                    total += offset
+
+            yield Stream(total=total, resumed=resumed,
+                         chunks=response.iter_content(CHUNK_SIZE))
+        finally:
+            response.close()

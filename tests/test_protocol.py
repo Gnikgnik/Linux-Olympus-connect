@@ -141,6 +141,60 @@ def test_thumbnail_returns_bytes(requests_mock):
     assert OlympusClient().thumbnail("/DCIM/100OLYMP/P9240123.JPG") == b"\xff\xd8jpeg"
 
 
+def test_open_stream_reports_total_from_content_length(requests_mock):
+    requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG",
+                      content=b"x" * 1000,
+                      headers={"Content-Length": "1000"})
+    with OlympusClient().open_stream("/DCIM/100OLYMP/A.JPG") as stream:
+        assert stream.total == 1000
+        assert stream.resumed is False
+        assert b"".join(stream.chunks) == b"x" * 1000
+
+
+def test_open_stream_with_offset_sends_range_header(requests_mock):
+    requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG", content=b"y" * 100)
+    with OlympusClient().open_stream("/DCIM/100OLYMP/A.JPG", offset=500):
+        pass
+    assert requests_mock.last_request.headers["Range"] == "bytes=500-"
+
+
+def test_open_stream_detects_honoured_range(requests_mock):
+    # 206 + Content-Range: la ripresa funziona, total viene dal denominatore.
+    # Questo firmware non lo fa, ma altri modelli sì e il ramo va protetto.
+    requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG",
+                      status_code=206, content=b"z" * 500,
+                      headers={"Content-Range": "bytes 500-999/1000"})
+    with OlympusClient().open_stream("/DCIM/100OLYMP/A.JPG", offset=500) as stream:
+        assert stream.resumed is True
+        assert stream.total == 1000
+
+
+def test_open_stream_detects_ignored_range(requests_mock):
+    # Il comportamento reale della E-M10 Mark IV: 200 nonostante il Range,
+    # nessun Content-Range, file intero. Si riparte da zero.
+    requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG",
+                      status_code=200, content=b"w" * 1000,
+                      headers={"Content-Length": "1000"})
+    with OlympusClient().open_stream("/DCIM/100OLYMP/A.JPG", offset=500) as stream:
+        assert stream.resumed is False
+        assert stream.total == 1000
+
+
+def test_open_stream_survives_missing_content_length(requests_mock):
+    requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG", content=b"q" * 10,
+                      headers={"Content-Length": ""})
+    with OlympusClient().open_stream("/DCIM/100OLYMP/A.JPG") as stream:
+        assert stream.total == 0        # sconosciuto, non un errore
+        assert b"".join(stream.chunks) == b"q" * 10
+
+
+def test_open_stream_raises_protocol_error_on_404(requests_mock):
+    requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG", status_code=404)
+    with pytest.raises(ProtocolError):
+        with OlympusClient().open_stream("/DCIM/100OLYMP/A.JPG"):
+            pass
+
+
 def test_connect_parses_real_camera_fixtures(requests_mock, fixture_bytes):
     # Il test che conta: output registrato dalla fotocamera reale (Task 0).
     requests_mock.get(f"{BASE_URL}/get_commandlist.cgi",
