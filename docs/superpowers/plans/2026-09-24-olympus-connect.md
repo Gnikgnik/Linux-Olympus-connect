@@ -48,7 +48,9 @@ Ogni task eredita implicitamente questi vincoli.
 
 ---
 
-### Task 0: Verifica sul campo con `diag.py`
+### Task 0: Verifica sul campo con `diag.py` — **COMPLETATO 2026-09-24**
+
+> Esito in [`docs/field-report-2026-09-24.md`](../../field-report-2026-09-24.md). Due passate. Sintesi: ORF e MOV scaricabili; miniature valide su tutti i formati; **`Range` non supportato**; **`set_timeout` non utilizzabile**; ipotesi sullo `User-Agent` **smentita**. Nessuna assunzione della spec resta non verificata. Le conseguenze sono già applicate nei Task 1, 2, 4, 5, 6 e 10.
 
 **Questo task va eseguito con la fotocamera accesa, in modalità Wi-Fi, e il PC collegato al suo access point.** Risponde a tre domande che la spec dichiara aperte e produce le fixture usate da tutti i task successivi.
 
@@ -754,9 +756,11 @@ def test_ensure_play_mode_is_idempotent(requests_mock):
 
 
 def test_keep_awake_sends_timeoutsec(requests_mock):
-    # Senza supporto Range un'interruzione costa l'intero file (il MOV più
-    # grande sulla scheda è di 944 MB): evitare che la fotocamera si
-    # addormenti è la mitigazione più efficace disponibile.
+    # Nota dal Task 0: su questo firmware set_timeout risponde HTTP 520
+    # errorcode 1006 per ogni valore, quindi keep_awake() restituirà False
+    # sulla fotocamera reale. Il metodo resta perché altri modelli possono
+    # supportarlo, e perché il suo valore è evitare che l'assenza del
+    # comando diventi un errore visibile all'utente.
     requests_mock.get(f"{BASE_URL}/get_commandlist.cgi", content=COMMANDLIST_WITH_TIMEOUT)
     requests_mock.get(f"{BASE_URL}/get_caminfo.cgi", content=CAMINFO)
     requests_mock.get(f"{BASE_URL}/set_timeout.cgi", content=b"")
@@ -927,13 +931,14 @@ class OlympusClient:
     def keep_awake(self, seconds: int = 3600) -> bool:
         """Chiede alla fotocamera di non spegnere l'access point.
 
-        Questo firmware non supporta le richieste Range, quindi un
-        trasferimento interrotto riparte da zero: su un video da centinaia
-        di MB il costo è alto e prevenire lo standby è la difesa migliore.
-
         Restituisce False se la fotocamera non dichiara set_timeout o se la
         richiesta fallisce: è un'ottimizzazione, non un requisito, e non
         deve mai impedire di scaricare.
+
+        Sulla E-M10 Mark IV con firmware 4.50 questo restituisce sempre
+        False: il comando è dichiarato ma risponde HTTP 520 errorcode 1006
+        (misurato, vedi docs/field-report-2026-09-24.md). Il metodo resta
+        per gli altri modelli.
         """
         if "set_timeout" not in self.commands:
             return False
@@ -3451,7 +3456,8 @@ Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 - [ ] il download di un MOV produce un file riproducibile
 - [ ] "Annulla" durante un MOV lascia un `.part`, e un nuovo download lo riprende invece di ricominciare (verificare con `ls -l` che il `.part` cresca dal valore precedente)
 - [ ] spegnendo il Wi-Fi della fotocamera a metà di un MOV, la coda si mette in pausa con un messaggio comprensibile; riaccendendolo, "Riprova" completa il file (ripartendo da zero, come previsto su questo firmware)
-- [ ] `keep_awake` viene invocato alla connessione e la fotocamera non si addormenta durante un download lungo
+- [ ] `keep_awake` viene invocato alla connessione e il suo fallimento (atteso su questo firmware: `HTTP 520`, `errorcode 1006`) **non produce nessun errore visibile all'utente** né interrompe il flusso
+- [ ] rieseguire `./diag.py` per la sonda estesa su `set_timeout` (modalità `rec` e valori limite): se un valore viene accettato, `keep_awake` va corretto di conseguenza e la difesa recuperata
 - [ ] rilanciando il download degli stessi file, tutti risultano "già presenti" e nulla viene ritrasferito
 - [ ] chiudendo la finestra durante un download, il processo termina senza errori e senza restare appeso
 

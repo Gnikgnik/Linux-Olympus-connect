@@ -225,10 +225,13 @@ Regola trasversale: **la GUI non si blocca e non muore**. Ogni worker ha un cana
 
 `CameraAsleep` è l'errore che si incontrerà davvero: la E-M10 IV spegne l'AP dopo inattività, e su un file grande il sintomo è un read timeout a metà. Gestione: 3 tentativi con backoff 2 s / 4 s / 8 s, poi pausa della coda con messaggio esplicito.
 
-**Senza supporto `Range` questo errore è caro:** il tentativo riparte da zero, e sulla scheda di riferimento ci sono video da 944 MB, 672 MB e 528 MB. Da qui due conseguenze di progetto:
+**Senza supporto `Range` questo errore è caro:** il tentativo riparte da zero, e sulla scheda di riferimento ci sono video da 944 MB, 672 MB e 528 MB.
 
-1. **`set_timeout.cgi?timeoutsec=<n>` va invocato alla connessione**, per chiedere alla fotocamera di non addormentarsi. È la mitigazione più efficace disponibile e costa una richiesta.
-2. **L'ordine della coda mette i file piccoli per primi.** A parità di tutto, terminare 1000 ORF da 20 MB prima di attaccare un MOV da 944 MB riduce il lavoro a rischio: un'interruzione costa il file in corso, e conviene che il file in corso sia quasi sempre piccolo.
+Il keep-alive via `set_timeout.cgi` sembrava la mitigazione ovvia, ma **sul firmware 4.50 non funziona**: risponde `HTTP 520` con `errorcode 1006` per ogni valore provato. `keep_awake()` resta nel client e degrada a `False` senza sollevare, ma non ottiene nulla qui. Restano quindi tre difese reali:
+
+1. **L'ordine della coda mette i file piccoli per primi.** Un'interruzione costa il file in corso, e con questo ordine il file in corso è quasi sempre piccolo: i 1141 ORF da 20 MB si chiudono prima che i MOV grandi entrino in coda.
+2. **Il trasferimento stesso è attività.** Il rischio di standby si concentra nei periodi di inattività — mentre si scorrono le miniature o si sceglie cosa scaricare — non durante un `GET` continuo. Questo non elimina le cadute di Wi-Fi, per cui i tentativi con backoff restano necessari.
+3. **`.part` + rename atomico**, descritti sopra.
 
 Il file `.part` con rename atomico resta comunque essenziale, e in assenza di `Range` lo è di più: garantisce che un trasferimento interrotto non lasci mai un file col nome definitivo, che è ciò che rende sicura la regola dei duplicati.
 
@@ -264,8 +267,10 @@ Verificati il 2026-09-24 su E-M10 Mark IV, firmware OI.Share `version 4.50`, ser
 | MOV scaricabile via `GET`? | **Sì.** 129,6 MB, QuickTime valido |
 | `Range` supportato? | **No.** `HTTP 200`, nessun `Content-Range`, file intero rimandato su tutti e tre i formati |
 | Decodifica data FAT corretta? | **Sì**, con granularità 2 s intrinseca al formato |
-| `set_timeout` disponibile? | Dichiarato nel commandlist con parametro `timeoutsec`; valori accettati da verificare |
-| `get_thumbnail` copre gli ORF? | **Da verificare.** È la domanda aperta più importante: il 98 % dei file è RAW |
+| `set_timeout` utilizzabile? | **No.** Dichiarato nel commandlist, ma risponde `HTTP 520` / `errorcode 1006` per 300, 600, 1800 e 3600 s |
+| `get_thumbnail` copre ORF e MOV? | **Sì.** JPEG validi di 8–13 KB per tutti e tre i formati: la griglia funziona sul 100 % della scheda |
+| `get_screennail` disponibile? | **Sì**, ma oltre 1 MB su ORF: adatto a un'anteprima singola, non a una griglia. Fuori scope |
+| `get_unusedcapacity` affidabile? | **No.** Restituisce `0xFFFFFFFF`, sentinella di "non disponibile" |
 
 Contenuto della scheda di riferimento — rilevante perché definisce la scala del problema:
 
