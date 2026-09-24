@@ -419,6 +419,28 @@ def test_parse_imglist_ignores_malformed_lines():
     assert [f.name for f in files] == ["GOOD.JPG"]
 
 
+def test_parse_imglist_ignores_version_header():
+    # La fotocamera reale premette una riga "VER_100" alla risposta.
+    text = "VER_100\r\n/DCIM/100OLYMP,GOOD.JPG,1,0,19594,45820\r\n"
+    files, _ = parse_imglist(text)
+    assert [f.name for f in files] == ["GOOD.JPG"]
+
+
+def test_parse_imglist_keeps_read_only_files():
+    # attrib=1 è il bit FAT read-only e compare nei dati reali della scheda
+    # (P9061187.ORF): è un file normale, non va scartato con hidden/system.
+    text = "/DCIM/100OLYMP,P9061187.ORF,19578383,1,23626,28090\r\n"
+    files, _ = parse_imglist(text)
+    assert [f.name for f in files] == ["P9061187.ORF"]
+
+
+def test_decode_fat_datetime_matches_real_camera_row():
+    # Riga reale: /DCIM/100OLYMP,P2100001.ORF,19578383,0,23626,28090
+    # EXIF letto da exiv2 sullo stesso file: 2026-02-10 13:45:53.
+    # Lo scarto di 1 s è la granularità a 2 secondi del formato FAT.
+    assert decode_fat_datetime(23626, 28090) == datetime(2026, 2, 10, 13, 45, 52)
+
+
 def test_parse_imglist_keeps_file_with_invalid_date():
     # Una data non valida non deve far perdere il file.
     text = "/DCIM/100OLYMP,ODD.JPG,1,0,0,0\r\n"
@@ -588,6 +610,7 @@ git commit -m "feat(core): modello dati, decodifica data FAT, parsing imglist"
   - `OlympusClient(base_url: str = "http://192.168.0.10", session: requests.Session | None = None)`
   - `OlympusClient.connect() -> str` — restituisce il modello, popola `.commands: set[str]`
   - `OlympusClient.ensure_play_mode() -> None`
+  - `OlympusClient.keep_awake(seconds: int = 3600) -> bool`
   - `OlympusClient.list_media(directory: str = "/DCIM") -> list[MediaFile]`
   - `OlympusClient.thumbnail(camera_path: str) -> bytes`
 
@@ -662,12 +685,18 @@ from olympus_connect.core.errors import CameraNotReachable, ProtocolError
 from olympus_connect.core.protocol import BASE_URL, HEADERS, OlympusClient
 
 CAMINFO = b'<?xml version="1.0"?><caminfo><model>E-M10MarkIV</model></caminfo>'
+# Il root reale è <oishare>, non <oimp>: verificato sulla fotocamera.
 COMMANDLIST = (
-    b'<?xml version="1.0"?><oimp>'
+    b'<?xml version="1.0"?><oishare>'
+    b'<version>4.50</version>'
     b'<cgi name="get_imglist"><http_method type="get"/></cgi>'
     b'<cgi name="switch_cammode"><http_method type="get"/></cgi>'
     b'<cgi name="get_thumbnail"><http_method type="get"/></cgi>'
-    b'</oimp>'
+    b'</oishare>'
+)
+COMMANDLIST_WITH_TIMEOUT = COMMANDLIST.replace(
+    b'</oishare>',
+    b'<cgi name="set_timeout"><http_method type="get"/></cgi></oishare>',
 )
 
 
@@ -722,6 +751,35 @@ def test_ensure_play_mode_is_idempotent(requests_mock):
     client.ensure_play_mode()
     client.ensure_play_mode()
     assert len(requests_mock.request_history) == 1
+
+
+def test_keep_awake_sends_timeoutsec(requests_mock):
+    # Senza supporto Range un'interruzione costa l'intero file (il MOV più
+    # grande sulla scheda è di 944 MB): evitare che la fotocamera si
+    # addormenti è la mitigazione più efficace disponibile.
+    requests_mock.get(f"{BASE_URL}/get_commandlist.cgi", content=COMMANDLIST_WITH_TIMEOUT)
+    requests_mock.get(f"{BASE_URL}/get_caminfo.cgi", content=CAMINFO)
+    requests_mock.get(f"{BASE_URL}/set_timeout.cgi", content=b"")
+
+    client = OlympusClient()
+    client.connect()
+    assert client.keep_awake(1800) is True
+    assert requests_mock.last_request.qs["timeoutsec"] == ["1800"]
+
+
+def test_keep_awake_returns_false_when_camera_lacks_the_command():
+    # Altri modelli non dichiarano set_timeout: non è un errore, si rinuncia.
+    client = OlympusClient()
+    client.commands = {"get_imglist"}
+    assert client.keep_awake() is False
+
+
+def test_keep_awake_swallows_failures(requests_mock):
+    # Un keep-alive fallito non deve impedire di scaricare le foto.
+    requests_mock.get(f"{BASE_URL}/set_timeout.cgi", status_code=500, content=b"nope")
+    client = OlympusClient()
+    client.commands = {"set_timeout"}
+    assert client.keep_awake() is False
 
 
 def test_list_media_recurses_into_subdirectories(requests_mock):
@@ -784,7 +842,7 @@ from typing import Iterator
 
 import requests
 
-from .errors import CameraAsleep, CameraNotReachable, ProtocolError
+from .errors import CameraAsleep, CameraNotReachable, OlympusError, ProtocolError
 from .model import MediaFile, parse_imglist
 
 BASE_URL = "http://192.168.0.10"
@@ -865,6 +923,25 @@ class OlympusClient:
             return
         self._get_ok("switch_cammode.cgi", mode="play")
         self._mode = "play"
+
+    def keep_awake(self, seconds: int = 3600) -> bool:
+        """Chiede alla fotocamera di non spegnere l'access point.
+
+        Questo firmware non supporta le richieste Range, quindi un
+        trasferimento interrotto riparte da zero: su un video da centinaia
+        di MB il costo è alto e prevenire lo standby è la difesa migliore.
+
+        Restituisce False se la fotocamera non dichiara set_timeout o se la
+        richiesta fallisce: è un'ottimizzazione, non un requisito, e non
+        deve mai impedire di scaricare.
+        """
+        if "set_timeout" not in self.commands:
+            return False
+        try:
+            self._get_ok("set_timeout.cgi", timeoutsec=seconds)
+            return True
+        except OlympusError:
+            return False
 
     # -- elenco e miniature -----------------------------------------------
 
@@ -1127,7 +1204,18 @@ def test_pending_excludes_present_jobs(tmp_path):
         Job(media("B.JPG"), tmp_path / "B.JPG", JobState.PRESENT),
         Job(media("C.JPG"), tmp_path / "C.JPG", JobState.INCOMPLETE),
     ]
-    assert [j.media.name for j in pending(jobs)] == ["A.JPG", "C.JPG"]
+    assert {j.media.name for j in pending(jobs)} == {"A.JPG", "C.JPG"}
+
+
+def test_pending_orders_smallest_first(tmp_path):
+    # Senza Range un'interruzione costa il file in corso: conviene che il
+    # file in corso sia il più piccolo possibile il più a lungo possibile.
+    jobs = [
+        Job(media("BIG.MOV", 944_000_000), tmp_path / "BIG.MOV", JobState.NEW),
+        Job(media("SMALL.ORF", 20_000_000), tmp_path / "SMALL.ORF", JobState.NEW),
+        Job(media("MID.MOV", 129_000_000), tmp_path / "MID.MOV", JobState.NEW),
+    ]
+    assert [j.media.name for j in pending(jobs)] == ["SMALL.ORF", "MID.MOV", "BIG.MOV"]
 ```
 
 - [ ] **Step 2: Eseguire i test per verificare che falliscano**
@@ -1183,8 +1271,18 @@ def plan(files: Iterable[MediaFile], dest_root: Path) -> list[Job]:
 
 
 def pending(jobs: Iterable[Job]) -> list[Job]:
-    """I soli job che richiedono un trasferimento."""
-    return [j for j in jobs if j.state is not JobState.PRESENT]
+    """I job da trasferire, dal più piccolo al più grande.
+
+    Questo firmware non supporta le richieste Range: un'interruzione costa
+    l'intero file in corso. Mettendo i file piccoli per primi, il lavoro a
+    rischio in ogni istante è quasi sempre minimo — chiudere 1000 ORF da
+    20 MB prima di attaccare un MOV da 944 MB è strettamente migliore che
+    il contrario.
+    """
+    return sorted(
+        (j for j in jobs if j.state is not JobState.PRESENT),
+        key=lambda j: j.media.size,
+    )
 ```
 
 - [ ] **Step 4: Eseguire i test per verificare che passino**
@@ -1201,9 +1299,11 @@ git commit -m "feat(core): pianificazione download e regola dei duplicati"
 
 ---
 
-### Task 5: Trasferimento con ripresa e rename atomico
+### Task 5: Trasferimento con recupero e rename atomico
 
-Questo è il task più importante del piano: è ciò che rende sopportabile scaricare un MOV da 600 MB su un Wi-Fi 2,4 GHz da una fotocamera che si addormenta.
+Questo è il task più importante del piano: è ciò che rende sopportabile scaricare 27,9 GB su un Wi-Fi 2,4 GHz da una fotocamera che si addormenta.
+
+> **Aggiornato dopo il Task 0.** La fotocamera **non supporta le richieste `Range`**: risponde `HTTP 200` senza `Content-Range` e rimanda il file intero. La ripresa da un offset è quindi impossibile su questo firmware, e il recupero consiste nel ripartire da zero. Il rilevamento resta a runtime (`stream.resumed`) e il ramo di ripresa resta nel codice, perché serve ad altri modelli e i test lo coprono in entrambe le direzioni. Il file `.part` con rename atomico **non va rimosso**: senza di esso un trasferimento interrotto lascerebbe un file col nome definitivo, e la regola dei duplicati di `plan()` lo considererebbe completo per sempre.
 
 **Files:**
 - Modify: `olympus_connect/core/downloader.py`
@@ -1349,7 +1449,9 @@ def test_download_sets_mtime_to_shot_time(tmp_path):
     )
 
 
-def test_download_resumes_from_existing_part_file(tmp_path):
+def test_download_resumes_from_existing_part_file_when_range_works(tmp_path):
+    # Ramo per altri modelli: la E-M10 IV non supporta Range (Task 0), ma il
+    # rilevamento è a runtime e questo percorso va comunque protetto.
     job = job_for(tmp_path)
     part = job.dest.with_suffix(job.dest.suffix + ".part")
     part.parent.mkdir(parents=True)
@@ -2408,8 +2510,9 @@ def describe_error(exc: Exception) -> str:
                 "sulla fotocamera e collega il PC al suo access point.")
     if isinstance(exc, CameraAsleep):
         return ("La fotocamera si è disconnessa, probabilmente per inattività. "
-                "Riattiva il Wi-Fi sulla fotocamera e premi Riprendi: il "
-                "trasferimento ricomincia dal punto raggiunto.")
+                "Riattiva il Wi-Fi sulla fotocamera e premi Riprova. "
+                "Questo modello non supporta la ripresa, quindi il file "
+                "interrotto riparte da zero; i file già completati restano.")
     if isinstance(exc, WrongNetwork):
         return f"Rete Wi-Fi sbagliata. {exc}"
     if isinstance(exc, NetworkUnavailable):
@@ -3042,7 +3145,7 @@ class MainWindow(QMainWindow):
         self._file_bar = QProgressBar()
         self._total_bar = QProgressBar()
         self._cancel_button = QPushButton("Annulla")
-        self._resume_button = QPushButton("Riprendi")
+        self._resume_button = QPushButton("Riprova")
         self._cancel_button.setEnabled(False)
         self._resume_button.setEnabled(False)
         self._cancel_button.clicked.connect(self.on_cancel)
@@ -3346,7 +3449,8 @@ Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 - [ ] il download di un ORF produce un file che `exiv2` legge: `exiv2 ~/Immagini/Olympus/*/*/*.ORF`
 - [ ] il download di un MOV produce un file riproducibile
 - [ ] "Annulla" durante un MOV lascia un `.part`, e un nuovo download lo riprende invece di ricominciare (verificare con `ls -l` che il `.part` cresca dal valore precedente)
-- [ ] spegnendo il Wi-Fi della fotocamera a metà di un MOV, la coda si mette in pausa con un messaggio comprensibile; riaccendendolo, "Riprendi" completa il file
+- [ ] spegnendo il Wi-Fi della fotocamera a metà di un MOV, la coda si mette in pausa con un messaggio comprensibile; riaccendendolo, "Riprova" completa il file (ripartendo da zero, come previsto su questo firmware)
+- [ ] `keep_awake` viene invocato alla connessione e la fotocamera non si addormenta durante un download lungo
 - [ ] rilanciando il download degli stessi file, tutti risultano "già presenti" e nulla viene ritrasferito
 - [ ] chiudendo la finestra durante un download, il processo termina senza errori e senza restare appeso
 
@@ -3375,7 +3479,7 @@ git commit -m "docs: README e referto della prova end-to-end"
 
 **Se il Task 0 smentisce un'assunzione**, fermarsi e riferire prima di proseguire. In particolare:
 
-- **`Range` non supportato** (nessun `206`): i test `test_download_resumes_from_existing_part_file` e `test_download_recovers_from_connection_dropped_at_half` del Task 5 vanno riscritti per verificare la ripartenza da zero, e il pulsante "Riprendi" del Task 10 va rietichettato "Riprova". Il resto del piano non cambia: `_attempt` già gestisce `stream.resumed is False` ripartendo da capo.
+- ~~**`Range` non supportato**~~ — **accertato il 2026-09-24: non è supportato.** Le conseguenze sono già applicate nel piano: Task 5 rietichettato "recupero" invece di "ripresa", i test coprono entrambi i rami, `pending()` ordina dal file più piccolo, `keep_awake` aggiunto al Task 2, pulsante "Riprova" nel Task 10. `_attempt` gestisce già `stream.resumed is False` ripartendo da capo, quindi il codice non cambia.
 - **ORF o MOV non scaricabili**: i tipi restano nel modello (li vediamo comunque nella griglia), ma `plan()` deve marcarli come non disponibili e la griglia deve mostrarli disabilitati. Aggiungere un task per questo invece di lasciare download che falliscono in silenzio.
 - **La fotocamera risponde anche senza lo `User-Agent`**: la causa del problema è altrove. Prima di scrivere codice, usare l'output di `diag.py` per capire quale gradino della scala fallisce davvero, e correggere la sezione *Problema* della spec.
 

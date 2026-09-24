@@ -1,19 +1,55 @@
 # Olympus Connect — Design
 
 **Data:** 2026-09-24
-**Stato:** approvato
+**Stato:** approvato; sezioni *Problema*, *Protocollo* e *Fatti accertati* riscritte il 2026-09-24 dopo la verifica sul campo
 **Obiettivo:** applicazione desktop Linux per collegarsi via Wi-Fi a una Olympus OM-D E-M10 Mark IV e scaricare foto e video.
 
 ## Problema
 
 Su Windows il trasferimento funziona. Su CachyOS, collegandosi all'access point della fotocamera, non si riesce a scaricare nulla.
 
-Due cause probabili, entrambe indipendenti dal fatto che l'associazione Wi-Fi riesca:
+**Causa accertata: manca il client.** La fotocamera espone un server HTTP perfettamente funzionante, ma non serve un indice di directory: puntare un browser su `192.168.0.10` non mostra nulla, e senza conoscere gli endpoint CGI non c'è modo di arrivare ai file. Su Windows il lavoro lo fa OI.Share; su Linux non esiste un equivalente installabile.
 
-1. **Il server HTTP della fotocamera scarta le richieste senza l'header `User-Agent: OI.Share v2`.** Un browser o `wget` puntati su `192.168.0.10` non ottengono risposta utile, dando l'impressione che la connessione sia rotta.
-2. **NetworkManager tratta l'AP della fotocamera come una rete normale:** le assegna una default route (perdita di Internet) ed esegue il connectivity check, potendo riagganciarsi a un'altra rete a metà trasferimento.
+La prima stesura di questa spec attribuiva il problema al fatto che la fotocamera scartasse le richieste prive dell'header `User-Agent: OI.Share v2`. **La verifica sul campo ha smentito l'ipotesi:** `get_caminfo.cgi` risponde `HTTP 200` con 436 byte identici sia con l'header sia senza. L'header viene comunque inviato — è quello che manda OI.Share, non costa niente e altri firmware potrebbero pretenderlo — ma non è la causa di nulla.
 
-Entrambe le cause sono ipotesi motivate, non fatti verificati. La prima azione dell'implementazione è confermarle o smentirle sul campo (vedi *Test sul campo*).
+Resta valido il secondo problema, di natura diversa: **NetworkManager tratta l'AP della fotocamera come una rete normale**, le assegna una default route ed esegue il connectivity check, potendo riagganciarsi a un'altra rete a metà trasferimento. Il profilo dedicato descritto più avanti è la risposta a questo.
+
+## Protocollo
+
+La fotocamera in modalità AP espone un server HTTP su `http://192.168.0.10/`, documentato come *OPC Communication Protocol 1.0a*. L'esemplare di riferimento dichiara `version 4.50`, `oitrackversion 3.10`, modello `E-M10MarkIV`.
+
+| Endpoint | Uso |
+|---|---|
+| `get_commandlist.cgi` | XML dei comandi supportati dal modello specifico |
+| `get_caminfo.cgi` | modello, numeri di serie, capacità dichiarate |
+| `switch_cammode.cgi?mode=play` | passaggio a modalità riproduzione, richiesto prima di elencare |
+| `get_imglist.cgi?DIR=/DCIM` | elenco file in formato CSV |
+| `get_thumbnail.cgi?DIR=<path>` | miniatura JPEG |
+| `get_screennail.cgi?DIR=<path>` | anteprima più grande della miniatura |
+| `set_timeout.cgi?timeoutsec=<n>` | timeout di inattività della sessione Wi-Fi |
+| `GET /DCIM/100OLYMP/<file>` | download del file |
+
+Header inviati su ogni richiesta: `User-Agent: OI.Share v2`, `Host: 192.168.0.10`. Non sono obbligatori (vedi *Problema*), ma replicano il comportamento di OI.Share.
+
+`get_caminfo.cgi` dichiara `GetRawImageSupport: available` e `GetImageScreennailSupport: available`. L'unica funzione Bluetooth dichiarata è `BleShutter`: **nessun handshake BLE è richiesto** per elencare o scaricare.
+
+Formato di una riga di `get_imglist.cgi`:
+
+```
+/DCIM/100OLYMP,P2100001.ORF,19578383,0,23626,28090
+ directory      nome         size     attr date  time
+```
+
+La prima riga della risposta è un'intestazione di versione (`VER_100`) che non ha 6 campi e va ignorata come qualunque riga malformata.
+
+`date` e `time` sono in formato FAT a campi di bit:
+
+- anno = `1980 + (date >> 9)`, mese = `(date >> 5) & 15`, giorno = `date & 31`
+- ora = `time >> 11`, minuti = `(time >> 5) & 63`, secondi = `2 * (time & 31)`
+
+Decodifica verificata contro l'EXIF reale: `23626/28090` → `2026-02-10 13:45:52`, contro `13:45:53` letto da `exiv2`. **Lo scarto di un secondo è la granularità intrinseca del formato FAT, non un difetto:** i secondi sono memorizzati in unità da 2. Non "correggere" questa formula.
+
+Bit di `attr`: 1 = read-only, 2 = hidden, 4 = system, 8 = volume, 16 = directory. Solo hidden, system e volume vanno scartati; **read-only è un file normale** e compare nei dati reali. Il bit directory richiede ricorsione. Una directory vuota risponde `404`, che va trattato come lista vuota e non come errore.
 
 ## Protocollo
 
@@ -66,7 +102,7 @@ def download_image(self, dir: str) -> bytes:
     return requests.get(self.URL_PREFIX + dir[1:], headers=self.HEADERS).content
 ```
 
-`.content` carica l'intero file in memoria e la firma restituisce `bytes`. Per un MOV 4K da 600 MB significa 600 MB di RAM e nessuna possibilità di ripresa: una caduta al 90% costa l'intero trasferimento. Non è correggibile dall'esterno — la firma del metodo *è* il vincolo. Si aggiungono l'assenza di `timeout` (una camera in standby appende la GUI) e i `print()` su stdout dentro `list_images`, invisibili in una GUI.
+`.content` carica l'intero file in memoria e la firma restituisce `bytes`. Sulla scheda di riferimento il MOV più grande è di **944 MB**: significa quasi un gigabyte di RAM per un singolo file, e nessuna possibilità di scrivere su disco progressivamente. Non è correggibile dall'esterno — la firma del metodo *è* il vincolo. Si aggiungono l'assenza di `timeout` (una camera in standby appende la GUI) e i `print()` su stdout dentro `list_images`, invisibili in una GUI.
 
 Contropartita accettata: `olympuswifi` è collaudata su molti modelli, questo client parte da uno. Mitigazione: `get_commandlist.cgi` fa dichiarare alla fotocamera stessa i comandi che supporta, quindi il client si adatta invece di assumere.
 
@@ -104,9 +140,12 @@ Nessun I/O. La decodifica della data FAT è una funzione pura isolata qui: è il
 |---|---|
 | `connect()` | `get_commandlist.cgi` → set di comandi supportati; `get_caminfo.cgi` → modello |
 | `ensure_play_mode()` | `switch_cammode.cgi?mode=play` |
+| `keep_awake(seconds)` | `set_timeout.cgi?timeoutsec=…`, solo se il comando è dichiarato; fallimento non bloccante |
 | `list_media(dir="/DCIM")` | ricorsiva; salta hidden/system/volume; `404` = vuoto; ritorna `list[MediaFile]` |
 | `thumbnail(path)` | `get_thumbnail.cgi?DIR=…` → `bytes` |
 | `open_stream(path, offset=0)` | iteratore di chunk + dimensione totale + **flag: il server ha onorato il `Range`?** (`206` contro `200`) |
+
+Ogni metodo verifica che il comando sia presente nel `get_commandlist` della fotocamera prima di invocarlo: i comandi variano da modello a modello, e `keep_awake` in particolare deve degradare silenziosamente dove `set_timeout` non esiste.
 
 Ogni richiesta ha `timeout` esplicito: 3 s per il connect, 15 s per il read. Lo streaming legge in chunk da 64 KiB. Solleva eccezioni tipizzate, non stampa mai.
 
@@ -146,7 +185,7 @@ Due fasi separate.
 `run(job, on_progress, should_cancel)`:
 
 1. scrive su `<dest>.part`
-2. se il `.part` esiste **e** il server supporta `Range`, riprende dalla sua dimensione; altrimenti tronca e riparte
+2. se il `.part` esiste **e** il server supporta `Range`, riprende dalla sua dimensione; altrimenti tronca e riparte. **Sul firmware 4.50 della E-M10 IV il `Range` non è supportato** (vedi *Fatti accertati*), quindi in pratica si riparte sempre da zero; il ramo di ripresa resta nel codice perché il rilevamento è a runtime e altri modelli o firmware potrebbero supportarlo
 3. a trasferimento completo, verifica la dimensione e fa `os.replace()` al nome finale
 4. imposta l'mtime del file a `shot_at`
 5. controlla `should_cancel` tra i chunk
@@ -169,7 +208,7 @@ Seriale per costruzione: accetta un job alla volta, la coda vive nel worker.
 4. griglia popolata; `plan()` marca i già scaricati
 5. miniature caricate pigramente per le righe visibili
 6. "Scarica selezionati" → job accodati al `DownloadWorker`, seriali
-7. annullamento in qualsiasi momento; i `.part` restano sul disco per la ripresa
+7. annullamento in qualsiasi momento; il `.part` interrotto viene scartato al tentativo successivo, perché senza `Range` non è riutilizzabile
 
 ## Gestione errori
 
@@ -179,12 +218,19 @@ Regola trasversale: **la GUI non si blocca e non muore**. Ogni worker ha un cana
 |---|---|---|
 | `CameraNotReachable` | nessuna route, o TCP rifiutato | "Attiva il Wi-Fi sulla fotocamera: menu → Connessione a smartphone" |
 | `WrongNetwork` | associato ad altra rete | nomina la rete a cui sei effettivamente collegato |
-| `CameraAsleep` | AP caduto per inattività | pausa della coda: "riconnetti e premi Riprendi" |
-| `RangeUnsupported` | il firmware ignora `Range` | degrada in silenzio a ripartenza da zero; annotato una volta nel log |
+| `CameraAsleep` | AP caduto per inattività | pausa della coda: "riconnetti e premi Riprova" |
+| `RangeUnsupported` | il firmware ignora `Range` | degrada in silenzio a ripartenza da zero; annotato una volta nel log. **È il caso normale su questo firmware** |
 | `ProtocolError` | XML/CSV inattesi | messaggio + risposta grezza in pannello dettagli |
 | disco pieno / permessi | I/O locale | fallimento del singolo job, la coda continua |
 
-`CameraAsleep` è l'errore che si incontrerà davvero: la E-M10 IV spegne l'AP dopo inattività, e su un MOV da mezzo giga il sintomo è un read timeout a metà. Gestione: 3 tentativi sul chunk corrente con backoff 2 s / 4 s / 8 s, poi pausa della coda con messaggio esplicito. Grazie a `.part` + `Range` non si perde nulla: alla riconnessione si riprende dal byte raggiunto. È lo scenario per cui è stata scartata la libreria esistente.
+`CameraAsleep` è l'errore che si incontrerà davvero: la E-M10 IV spegne l'AP dopo inattività, e su un file grande il sintomo è un read timeout a metà. Gestione: 3 tentativi con backoff 2 s / 4 s / 8 s, poi pausa della coda con messaggio esplicito.
+
+**Senza supporto `Range` questo errore è caro:** il tentativo riparte da zero, e sulla scheda di riferimento ci sono video da 944 MB, 672 MB e 528 MB. Da qui due conseguenze di progetto:
+
+1. **`set_timeout.cgi?timeoutsec=<n>` va invocato alla connessione**, per chiedere alla fotocamera di non addormentarsi. È la mitigazione più efficace disponibile e costa una richiesta.
+2. **L'ordine della coda mette i file piccoli per primi.** A parità di tutto, terminare 1000 ORF da 20 MB prima di attaccare un MOV da 944 MB riduce il lavoro a rischio: un'interruzione costa il file in corso, e conviene che il file in corso sia quasi sempre piccolo.
+
+Il file `.part` con rename atomico resta comunque essenziale, e in assenza di `Range` lo è di più: garantisce che un trasferimento interrotto non lasci mai un file col nome definitivo, che è ciò che rende sicura la regola dei duplicati.
 
 ## Test
 
@@ -197,25 +243,39 @@ Regola trasversale: **la GUI non si blocca e non muore**. Ogni worker ha un cana
 | `network.py` | runner `nmcli` iniettabile: si verificano gli argv emessi, senza toccare la rete |
 | GUI | smoke test di costruzione; verifica manuale con la fotocamera |
 
-Il test più importante è la connessione chiusa al 50 %: è l'unico modo per sapere che la ripresa funziona prima di scoprirlo su un video da 600 MB.
+Il test più importante è la connessione chiusa al 50 %: è l'unico modo per sapere che il recupero funziona prima di scoprirlo su un video da 944 MB. Il server di test deve coprire entrambi i comportamenti — onora il `Range` e lo ignora — perché il secondo è quello reale su questo firmware e il primo protegge il ramo di codice che serve ad altri modelli.
 
 ## Test sul campo (prima azione dell'implementazione)
 
-`diag.py`, ~40 righe, eseguito con la fotocamera accesa e collegata, **prima di scrivere codice GUI**:
+`diag.py`, eseguito con la fotocamera accesa e collegata, **prima di scrivere codice GUI**. Esegue la scala diagnostica, interroga `get_caminfo.cgi` con e senza `User-Agent`, salva l'output grezzo di `get_commandlist.cgi` e `get_imglist.cgi`, scarica un JPEG, un ORF e un MOV, verifica il `Range`, prova `get_thumbnail`/`get_screennail` su ciascun tipo e sonda `set_timeout`.
 
-1. esegue la scala diagnostica completa stampando ogni gradino
-2. interroga `get_caminfo.cgi` con e senza `User-Agent: OI.Share v2`, confermando o smentendo la causa #1
-3. salva l'output grezzo di `get_commandlist.cgi` e `get_imglist.cgi`
-4. scarica un JPEG, un ORF e un MOV; verifica se una richiesta `Range` riceve `206`
+Produce le fixture di test e resta nel repo come strumento di diagnosi permanente. Duplica l'output in `diag-report.txt`, perché viene eseguito mentre la macchina è offline e il referto è l'unico risultato.
 
-Risponde alle tre domande aperte — **RAW scaricabile? MOV scaricabile? `Range` supportato?** — e produce le fixture di test. Resta nel repo come strumento di diagnosi permanente.
+## Fatti accertati sul campo
 
-## Assunzioni da verificare
+Verificati il 2026-09-24 su E-M10 Mark IV, firmware OI.Share `version 4.50`, seriale `BJGA85301`.
 
-- **La E-M10 IV risponde su `192.168.0.10:80`** come i modelli precedenti. Nessuna documentazione fa sospettare il contrario, ma non esistono conferme specifiche per questo modello. Se il firmware avesse cambiato indirizzo o richiedesse un handshake Bluetooth preliminare, `diag.py` lo rivela al primo tentativo e il design della rete va rivisto.
-- **ORF e MOV sono scaricabili via `GET` sul path.** OI.Share non li espone, ma è un limite dell'app, non necessariamente del server.
+| Domanda | Esito |
+|---|---|
+| Risponde su `192.168.0.10:80`? | **Sì**, con rotta on-link diretta (`src 192.168.0.3`) |
+| Serve un handshake Bluetooth? | **No.** `caminfo` dichiara solo `BleShutter` |
+| Serve l'header `User-Agent: OI.Share v2`? | **No.** `HTTP 200` identico con e senza |
+| ORF scaricabile via `GET`? | **Sì.** 19,6 MB integri; `caminfo` dichiara `GetRawImageSupport: available` |
+| MOV scaricabile via `GET`? | **Sì.** 129,6 MB, QuickTime valido |
+| `Range` supportato? | **No.** `HTTP 200`, nessun `Content-Range`, file intero rimandato su tutti e tre i formati |
+| Decodifica data FAT corretta? | **Sì**, con granularità 2 s intrinseca al formato |
+| `set_timeout` disponibile? | Dichiarato nel commandlist con parametro `timeoutsec`; valori accettati da verificare |
+| `get_thumbnail` copre gli ORF? | **Da verificare.** È la domanda aperta più importante: il 98 % dei file è RAW |
 
-Se una delle due cade, si scopre il primo giorno.
+Contenuto della scheda di riferimento — rilevante perché definisce la scala del problema:
+
+| Tipo | File | Totale | Media |
+|---|---|---|---|
+| `.ORF` | 1141 | 23,48 GB | 20,6 MB |
+| `.MOV` | 18 | 4,39 GB | 243,8 MB (massimo 944 MB) |
+| `.JPG` | 2 | 0,02 GB | 9,0 MB |
+
+**Questo dato giustifica il progetto meglio di qualunque argomento:** OI.Share importa solo JPEG, quindi l'applicazione ufficiale vede 2 file su 1161. Comporta anche che la griglia debba essere virtualizzata per davvero e che il salto dei duplicati non sia un ottimizzazione ma un requisito.
 
 ## Fuori scope
 
