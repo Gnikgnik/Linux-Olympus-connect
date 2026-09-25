@@ -71,17 +71,35 @@ class ThumbWorker(QObject):
 
     Verificato sul campo: get_thumbnail restituisce un JPEG valido anche per
     ORF e MOV, fra 8 e 13 KB.
+
+    Deve avere un OlympusClient **proprio**: requests.Session non è
+    thread-safe, e condividerla con gli altri worker fa arrivare i corpi
+    troncati — una miniatura troncata si vede come una striscia.
     """
 
     ready = pyqtSignal(str, bytes)
     failed = pyqtSignal(str, str)
+    skipped = pyqtSignal(str)
 
     def __init__(self, client) -> None:
         super().__init__()
         self._client = client
+        self._suspended = False
+
+    @pyqtSlot(bool)
+    def set_suspended(self, suspended: bool) -> None:
+        """Sospende le richieste mentre un download è in corso.
+
+        Il server della fotocamera è un microcontrollore: due trasferimenti
+        HTTP in volo insieme lo degradano, e il download ha la precedenza.
+        """
+        self._suspended = suspended
 
     @pyqtSlot(str)
     def request(self, camera_path: str) -> None:
+        if self._suspended:
+            self.skipped.emit(camera_path)
+            return
         try:
             self.ready.emit(camera_path, self._client.thumbnail(camera_path))
         except Exception as exc:

@@ -181,8 +181,10 @@ class MainWindow(QMainWindow):
         return thread
 
     def on_refresh(self) -> None:
-        self._client = self._client_factory()
-        worker = ListWorker(self._client, self.dest_root())
+        # Ogni worker riceve un client proprio: requests.Session non è
+        # thread-safe, e condividerla fra thread fa arrivare i corpi
+        # troncati (miniature a strisce).
+        worker = ListWorker(self._client_factory(), self.dest_root())
         worker.connected.connect(self.on_connected)
         worker.listed.connect(self.on_listed)
         worker.failed.connect(self.on_failed)
@@ -204,18 +206,18 @@ class MainWindow(QMainWindow):
             f"{new} da scaricare, {present} già presenti."
         )
 
-        if self._client is not None:
-            self._ensure_thumb_worker()
-            self._grid.request_visible_thumbnails()
+        self._ensure_thumb_worker()
+        self._grid.request_visible_thumbnails()
 
     def _ensure_thumb_worker(self) -> None:
-        """Un solo worker per le miniature, sul proprio thread."""
+        """Un solo worker per le miniature, sul proprio thread e col proprio
+        client HTTP."""
         if self._thumb_worker is not None:
             return
-        worker = ThumbWorker(self._client)
-        worker.ready.connect(
-            lambda path, data: self._model.set_thumbnail(path, data)
-        )
+        worker = ThumbWorker(self._client_factory())
+        worker.ready.connect(self.on_thumbnail_ready)
+        worker.failed.connect(self.on_thumbnail_failed)
+        worker.skipped.connect(self._grid.forget_thumbnail)
         self._thumb_worker = worker
         self._start_on_thread(worker)
         # QueuedConnection: la richiesta viene eseguita sul thread del
@@ -224,6 +226,25 @@ class MainWindow(QMainWindow):
         self._grid.thumbnail_needed.connect(
             worker.request, Qt.ConnectionType.QueuedConnection
         )
+
+    @pyqtSlot(str, bytes)
+    def on_thumbnail_ready(self, camera_path: str, data: bytes) -> None:
+        if not self._model.set_thumbnail(camera_path, data):
+            # Byte non decodificabili: dimentica la richiesta così può
+            # essere ripetuta invece di lasciare la casella vuota.
+            self._grid.forget_thumbnail(camera_path)
+
+    @pyqtSlot(str, str)
+    def on_thumbnail_failed(self, camera_path: str, message: str) -> None:
+        self._grid.forget_thumbnail(camera_path)
+
+    def _suspend_thumbnails(self, suspended: bool) -> None:
+        """Ferma le miniature durante un download, e le riprende dopo."""
+        if self._thumb_worker is None:
+            return
+        self._thumb_worker.set_suspended(suspended)
+        if not suspended:
+            self._grid.request_visible_thumbnails()
 
     @pyqtSlot(str)
     def on_failed(self, message: str) -> None:
@@ -253,11 +274,11 @@ class MainWindow(QMainWindow):
         if not jobs:
             self.statusBar().showMessage("Nessun file selezionato.", 4000)
             return
-        if self._client is None:
-            self.statusBar().showMessage("Aggiorna prima l'elenco.", 4000)
-            return
 
-        worker = DownloadWorker(self._client, jobs)
+        # Client proprio anche qui, e miniature sospese: il server della
+        # fotocamera regge male due trasferimenti in volo insieme.
+        self._suspend_thumbnails(True)
+        worker = DownloadWorker(self._client_factory(), jobs)
         worker.file_started.connect(self._file_label.setText)
         worker.file_progress.connect(self._update_file_bar)
         worker.total_progress.connect(self._update_total_bar)
@@ -285,12 +306,14 @@ class MainWindow(QMainWindow):
             self._download_worker.cancel()
         self._cancel_button.setEnabled(False)
         self._resume_button.setEnabled(True)
+        self._suspend_thumbnails(False)
 
     def on_resume(self) -> None:
         if self._download_worker is None:
             return
         self._resume_button.setEnabled(False)
         self._cancel_button.setEnabled(True)
+        self._suspend_thumbnails(True)
         self._download_worker.resume()
 
     @pyqtSlot(str)
@@ -298,12 +321,14 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
         self._cancel_button.setEnabled(False)
         self._resume_button.setEnabled(True)
+        self._suspend_thumbnails(False)
 
     @pyqtSlot()
     def on_download_finished(self) -> None:
         self._file_label.setText("")
         self._cancel_button.setEnabled(False)
         self._resume_button.setEnabled(False)
+        self._suspend_thumbnails(False)
         self.statusBar().showMessage("Download completato.")
         self.on_refresh()   # ricalcola lo stato dei file a destinazione
 

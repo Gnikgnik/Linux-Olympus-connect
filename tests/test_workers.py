@@ -123,6 +123,35 @@ def test_thumb_worker_emits_ready_with_path_and_bytes(qapp):
     assert got == [("/DCIM/100OLYMP/A.JPG", b"\xff\xd8jpeg")]
 
 
+def test_thumb_worker_skips_requests_while_suspended(qapp):
+    # Il server HTTP della fotocamera è un microcontrollore: mentre un
+    # download è in corso non deve ricevere anche richieste di miniature.
+    client = FakeClient(thumb=b"\xff\xd8jpeg")
+    worker = ThumbWorker(client)
+    got = []
+    worker.ready.connect(lambda p, b: got.append(p))
+
+    worker.set_suspended(True)
+    worker.request("/DCIM/100OLYMP/A.JPG")
+    assert got == []
+
+    worker.set_suspended(False)
+    worker.request("/DCIM/100OLYMP/A.JPG")
+    assert got == ["/DCIM/100OLYMP/A.JPG"]
+
+
+def test_thumb_worker_reports_skipped_path_when_suspended(qapp):
+    # Il chiamante deve sapere che la richiesta non è stata servita, per
+    # poterla ripetere dopo: altrimenti quella miniatura resta vuota.
+    worker = ThumbWorker(FakeClient())
+    skipped = []
+    worker.skipped.connect(skipped.append)
+
+    worker.set_suspended(True)
+    worker.request("/DCIM/100OLYMP/A.JPG")
+    assert skipped == ["/DCIM/100OLYMP/A.JPG"]
+
+
 def test_thumb_worker_failure_does_not_raise(qapp):
     worker = ThumbWorker(FakeClient(fail=ProtocolError("nope")))
     failures = []

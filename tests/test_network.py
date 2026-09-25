@@ -290,3 +290,67 @@ def test_disconnect_brings_profile_down():
     runner = fake_runner({"connection down": ok()})
     CameraNetwork(ssid="CAM", runner=runner).disconnect()
     assert runner.calls[-1] == ["nmcli", "connection", "down", "olympus-connect-CAM"]
+
+
+# --- scansione delle reti --------------------------------------------------
+
+# Output reale di `nmcli -t -f SIGNAL,SSID device wifi list`, che include
+# SSID vuoti (reti nascoste) e duplicati (più access point).
+SCAN = (
+    "87:FASTWEB-6J936A_Plus\n"
+    "87:FASTWEB-6J936A_Plus_5G\n"
+    "77:GUEST-FASTWEB-6J936A\n"
+    "59:\n"
+    "54:FASTWEB-6J936A\n"
+    "49:TIM-62975449\n"
+    "45:FASTWEB-6J936A\n"
+)
+
+
+def test_scan_ssids_orders_by_signal_strength():
+    runner = fake_runner({"device wifi list": ok(SCAN)})
+    found = CameraNetwork(runner=runner).scan_ssids()
+    assert found[0] == "FASTWEB-6J936A_Plus"
+    assert found.index("FASTWEB-6J936A") < found.index("TIM-62975449")
+
+
+def test_scan_ssids_drops_hidden_and_duplicates():
+    runner = fake_runner({"device wifi list": ok(SCAN)})
+    found = CameraNetwork(runner=runner).scan_ssids()
+    assert "" not in found
+    assert found.count("FASTWEB-6J936A") == 1
+
+
+def test_scan_ssids_unescapes_colons():
+    # nmcli in modalità terse escapa i ':' dentro i valori.
+    runner = fake_runner({"device wifi list": ok("70:rete\\:strana\n")})
+    assert CameraNetwork(runner=runner).scan_ssids() == ["rete:strana"]
+
+
+def test_scan_ssids_puts_camera_like_networks_first():
+    # L'SSID della fotocamera è lungo e scomodo da digitare: va offerto per
+    # primo anche se il segnale è più debole delle reti di casa.
+    scan = "90:FASTWEB-6J936A\n30:E-M10MKIV-P-BJGA85301\n"
+    runner = fake_runner({"device wifi list": ok(scan)})
+    assert CameraNetwork(runner=runner).scan_ssids()[0] == "E-M10MKIV-P-BJGA85301"
+
+
+@pytest.mark.parametrize("ssid,expected", [
+    ("E-M10MKIV-P-BJGA85301", True),
+    ("E-M1MarkIII-P-ABC123", True),
+    ("E-PL10-P-XYZ", True),
+    ("OM-1-P-123", True),
+    ("TG-6-P-456", True),
+    ("FASTWEB-6J936A", False),
+    ("TIM-62975449", False),
+    ("", False),
+])
+def test_looks_like_camera(ssid, expected):
+    from olympus_connect.core.network import looks_like_camera
+    assert looks_like_camera(ssid) is expected
+
+
+def test_scan_ssids_returns_empty_list_when_scan_fails():
+    runner = fake_runner({"device wifi list": CommandResult(1, "", "no wifi")})
+    # Una scansione fallita non deve impedire di inserire l'SSID a mano.
+    assert CameraNetwork(runner=runner).scan_ssids() == []

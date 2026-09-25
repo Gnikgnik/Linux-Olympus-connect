@@ -5,12 +5,23 @@ verificano gli argv emessi senza toccare la rete reale.
 """
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
 from dataclasses import dataclass, field
 from typing import Callable
 
 from .errors import NetworkUnavailable
+
+# Gli access point delle fotocamere Olympus/OM System hanno l'SSID nella
+# forma <modello>-P-<seriale>, per esempio E-M10MKIV-P-BJGA85301. Serve solo
+# a offrirli per primi nell'elenco: un falso negativo costa un po' di
+# scorrimento, non un errore.
+_CAMERA_SSID = re.compile(r"^(E-M\d|E-PL?\d|OM-\d|TG-\d|STYLUS)", re.IGNORECASE)
+
+
+def looks_like_camera(ssid: str) -> bool:
+    return bool(ssid) and _CAMERA_SSID.match(ssid) is not None
 
 CAMERA_IP = "192.168.0.10"
 CAMERA_PORT = 80
@@ -143,6 +154,29 @@ class CameraNetwork:
             elif key == "GENERAL.STATE":
                 state = value
         return name if state.startswith("100") else None
+
+    def scan_ssids(self) -> list[str]:
+        """Le reti Wi-Fi visibili, quelle che sembrano fotocamere per prime.
+
+        Serve perché l'SSID della fotocamera è lungo e scomodo da digitare.
+        Una scansione fallita restituisce una lista vuota invece di
+        sollevare: l'utente deve poter comunque inserire l'SSID a mano.
+        """
+        result = self._nmcli("-t", "-f", "SIGNAL,SSID", "device", "wifi", "list")
+        if result.returncode != 0:
+            return []
+
+        seen: list[str] = []
+        for line in result.stdout.splitlines():
+            signal, _, ssid = line.partition(":")
+            ssid = ssid.replace("\\:", ":").strip()
+            if not ssid or ssid in seen:
+                continue         # reti nascoste e access point duplicati
+            seen.append(ssid)
+
+        # nmcli già ordina per potenza; qui basta portare avanti le
+        # fotocamere mantenendo stabile il resto.
+        return sorted(seen, key=lambda s: not looks_like_camera(s))
 
     def is_onlink(self) -> tuple[bool, str]:
         """La fotocamera è raggiungibile direttamente, senza gateway?

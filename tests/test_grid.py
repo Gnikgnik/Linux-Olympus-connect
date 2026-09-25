@@ -146,6 +146,23 @@ def test_grid_requests_thumbnail_once_per_file(qapp):
     assert asked == ["/DCIM/100OLYMP/A.JPG"]
 
 
+def test_grid_forget_thumbnail_allows_a_new_request(qapp):
+    # Una miniatura arrivata corrotta o non servita deve poter essere
+    # richiesta di nuovo: senza questo resta vuota per sempre.
+    model = MediaListModel()
+    grid = MediaGrid(model)
+    model.set_jobs([job("A.JPG")])
+    grid.resize(400, 300)
+
+    asked = []
+    grid.thumbnail_needed.connect(asked.append)
+    grid.request_visible_thumbnails()
+    grid.forget_thumbnail("/DCIM/100OLYMP/A.JPG")
+    grid.request_visible_thumbnails()
+
+    assert asked == ["/DCIM/100OLYMP/A.JPG"] * 2
+
+
 def test_grid_selected_jobs_is_empty_without_selection(qapp):
     model = MediaListModel()
     model.set_jobs([job("A.JPG")])

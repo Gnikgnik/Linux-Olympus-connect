@@ -73,16 +73,22 @@ class MediaListModel(QAbstractListModel):
             return None
         return self._visible[index.row()]
 
-    def set_thumbnail(self, camera_path: str, data: bytes) -> None:
+    def set_thumbnail(self, camera_path: str, data: bytes) -> bool:
+        """Registra una miniatura. False se i byte non sono decodificabili.
+
+        Il chiamante usa il valore di ritorno per ripetere la richiesta: un
+        JPEG troncato va riscaricato, non accettato.
+        """
         pixmap = QPixmap()
         if not pixmap.loadFromData(data):
-            return          # byte non decodificabili: nessun crash, nessuna icona
+            return False    # byte non decodificabili: nessun crash, nessuna icona
         self._thumbnails[camera_path] = pixmap
         for row, job in enumerate(self._visible):
             if job.media.camera_path == camera_path:
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
-                return
+                break
+        return True
 
     # -- interfaccia QAbstractListModel ------------------------------------
 
@@ -136,15 +142,25 @@ class MediaGrid(QListView):
         jobs = [self._model.job_at(i) for i in self.selectedIndexes()]
         return [j for j in jobs if j is not None]
 
+    def forget_thumbnail(self, camera_path: str) -> None:
+        """Dimentica una richiesta, così può essere ripetuta.
+
+        Serve quando una miniatura è arrivata corrotta o non è stata servita:
+        senza questo il path resterebbe marcato come richiesto e la casella
+        rimarrebbe vuota per sempre.
+        """
+        self._requested.discard(camera_path)
+
     def request_visible_thumbnails(self) -> None:
         """Chiede le miniature solo per ciò che si vede, una volta sola."""
         rect = self.viewport().rect()
         for row in range(self._model.rowCount()):
             index = self._model.index(row)
-            item_rect = self.visualRect(index)
-            if item_rect.top() > rect.bottom():
-                break          # oltre il fondo della viewport: basta
-            if not rect.intersects(item_rect):
+            # Nessuna uscita anticipata sul primo elemento fuori vista: la
+            # monotonia dei rettangoli non è garantita prima che la vista
+            # abbia completato il layout, e uscire prima lasciava gruppi di
+            # miniature non richieste.
+            if not rect.intersects(self.visualRect(index)):
                 continue
             job = self._model.job_at(index)
             if job and job.media.camera_path not in self._requested:
