@@ -2688,6 +2688,12 @@ git commit -m "feat(gui): worker Qt e traduzione degli errori del core"
 
 ### Task 9: Griglia delle miniature
 
+> **Difetto trovato provando l'applicazione, corretto dopo.** Le miniature si vedevano come una striscia, e premendo Aggiorna apparivano corrette. Causa misurata: senza decorazione il rettangolo dell'elemento si dimensiona sul solo testo — `sizeHintForIndex` restituiva `(46, 17)` — e quando la miniatura da 160×120 arrivava veniva disegnata dentro quel rettangolo, che `dataChanged` non fa ricalcolare. `setUniformItemSizes(True)` congelava quella misura per tutti gli elementi; "Aggiorna" ricostruiva il layout con le miniature già in cache e il problema sembrava sparire.
+>
+> Correzione: `DecorationRole` restituisce **sempre** un'icona, con un segnaposto della dimensione definitiva quando la miniatura non è ancora arrivata, e ogni miniatura viene composta su una tela di `THUMBNAIL_SIZE` centrata — necessario perché i video sono 16:9 e le foto 4:3, e altrimenti la cella cambiava altezza secondo cosa era già arrivato. Quattro test bloccano la regressione, incluso il confronto di `sizeHintForIndex` prima e dopo l'arrivo della miniatura.
+>
+> Diagnosi iniziale sbagliata, registrata perché istruttiva: avevo attribuito il difetto alla `requests.Session` condivisa fra worker su thread diversi. La condivisione era reale e va evitata, ma non era questa la causa — l'indizio che la smentiva era proprio *"dopo Aggiorna sono perfette"*: se i byte in cache sono integri, non sono mai stati corrotti.
+
 **Files:**
 - Create: `olympus_connect/gui/grid.py`
 - Test: `tests/test_grid.py`

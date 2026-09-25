@@ -130,6 +130,61 @@ def test_model_empty_kinds_filter_hides_everything(qapp):
     assert model.rowCount() == 0
 
 
+# --- dimensione stabile degli elementi (difetto della «striscia») ----------
+
+def test_decoration_is_never_null(qapp):
+    """Senza un'icona il rettangolo dell'elemento si dimensiona sul testo.
+
+    Quando poi la miniatura arriva, viene disegnata dentro quel rettangolo
+    minuscolo e si vede solo una striscia. Un segnaposto della dimensione
+    definitiva rende la misura stabile dall'inizio.
+    """
+    model = MediaListModel()
+    model.set_jobs([job("A.JPG")])
+    assert model.data(model.index(0, 0),
+                      Qt.ItemDataRole.DecorationRole) is not None
+
+
+def test_item_size_does_not_change_when_thumbnail_arrives(qapp):
+    model = MediaListModel()
+    grid = MediaGrid(model)
+    model.set_jobs([job("A.JPG")])
+    grid.resize(800, 600)
+
+    index = model.index(0, 0)
+    before = grid.sizeHintForIndex(index)
+    model.set_thumbnail("/DCIM/100OLYMP/A.JPG", _jpeg(160, 120))
+    after = grid.sizeHintForIndex(index)
+
+    assert before == after
+    # E deve essere grande quanto la miniatura, non quanto il testo.
+    assert after.height() >= 120
+
+
+def test_thumbnail_is_scaled_within_the_declared_size(qapp):
+    # Una miniatura più grande del previsto non deve allargare la cella.
+    model = MediaListModel()
+    grid = MediaGrid(model)
+    model.set_jobs([job("A.JPG")])
+    grid.resize(800, 600)
+
+    before = grid.sizeHintForIndex(model.index(0, 0))
+    model.set_thumbnail("/DCIM/100OLYMP/A.JPG", _jpeg(1600, 1200))
+    assert grid.sizeHintForIndex(model.index(0, 0)) == before
+
+
+def test_widescreen_thumbnail_keeps_the_item_size(qapp):
+    # I video hanno proporzioni diverse dalle foto: 16:9 contro 4:3.
+    model = MediaListModel()
+    grid = MediaGrid(model)
+    model.set_jobs([job("A.MOV", kind=MediaKind.MOVIE)])
+    grid.resize(800, 600)
+
+    before = grid.sizeHintForIndex(model.index(0, 0))
+    model.set_thumbnail("/DCIM/100OLYMP/A.MOV", _jpeg(1920, 1080))
+    assert grid.sizeHintForIndex(model.index(0, 0)) == before
+
+
 # --- vista -----------------------------------------------------------------
 
 def test_grid_requests_thumbnail_once_per_file(qapp):
@@ -306,6 +361,20 @@ def test_grid_handles_large_listing(qapp, fixture_bytes):
     grid.thumbnail_needed.connect(asked.append)
     grid.request_visible_thumbnails()
     assert 0 < len(asked) < 100
+
+
+def _jpeg(width: int, height: int) -> bytes:
+    """JPEG valido delle dimensioni richieste, generato da Qt."""
+    from PyQt6.QtCore import QBuffer, QByteArray
+    from PyQt6.QtGui import QPixmap
+
+    pixmap = QPixmap(width, height)
+    pixmap.fill()
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QBuffer.OpenModeFlag.WriteOnly)
+    assert pixmap.save(buffer, "JPEG")
+    return bytes(data)
 
 
 def _tiny_png() -> bytes:

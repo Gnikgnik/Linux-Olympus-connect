@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QListView, QTreeView
 
 from ..core.downloader import Job, JobState
@@ -49,6 +49,61 @@ _KIND_TEXT = {
 # I file senza data leggibile vanno in fondo all'ordinamento per data,
 # non in testa: una data mancante non è «molto vecchia».
 _NO_DATE = datetime.max
+
+
+_placeholder_icon: QIcon | None = None
+
+
+def placeholder_icon() -> QIcon:
+    """Riquadro vuoto della dimensione definitiva di una miniatura.
+
+    Serve a un difetto preciso: senza decorazione il rettangolo
+    dell'elemento si dimensiona sul solo testo (46x17 px misurati), e
+    quando la miniatura arriva viene disegnata dentro quel rettangolo —
+    si vede una striscia. Restituendo sempre un'icona, la misura è
+    stabile dal primo layout e l'immagine vera la sostituisce senza
+    ricalcoli.
+
+    Costruito alla prima richiesta: QPixmap richiede un QApplication vivo,
+    quindi non può essere una costante di modulo.
+    """
+    global _placeholder_icon
+    if _placeholder_icon is None:
+        pixmap = QPixmap(THUMBNAIL_SIZE)
+        pixmap.fill(QColor(0, 0, 0, 20))
+        _placeholder_icon = QIcon(pixmap)
+    return _placeholder_icon
+
+
+def _fit_to_thumbnail(pixmap: QPixmap) -> QPixmap:
+    """Riporta una miniatura alla dimensione dichiarata, centrandola.
+
+    Tutte le miniature devono occupare esattamente THUMBNAIL_SIZE, anche a
+    proporzioni diverse: i video sono 16:9 e le foto 4:3, e lasciarle di
+    altezza diversa farebbe cambiare la dimensione delle celle a seconda di
+    cosa è già arrivato — lo stesso difetto che il segnaposto risolve.
+    """
+    scaled = pixmap
+    if (pixmap.width() > THUMBNAIL_SIZE.width()
+            or pixmap.height() > THUMBNAIL_SIZE.height()):
+        scaled = pixmap.scaled(
+            THUMBNAIL_SIZE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    if scaled.size() == THUMBNAIL_SIZE:
+        return scaled
+
+    canvas = QPixmap(THUMBNAIL_SIZE)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.drawPixmap(
+        (THUMBNAIL_SIZE.width() - scaled.width()) // 2,
+        (THUMBNAIL_SIZE.height() - scaled.height()) // 2,
+        scaled,
+    )
+    painter.end()
+    return canvas
 
 
 def _format_size(size: int) -> str:
@@ -147,7 +202,7 @@ class MediaListModel(QAbstractTableModel):
         pixmap = QPixmap()
         if not pixmap.loadFromData(data):
             return False    # byte non decodificabili: nessun crash, nessuna icona
-        self._thumbnails[camera_path] = pixmap
+        self._thumbnails[camera_path] = _fit_to_thumbnail(pixmap)
         for row, job in enumerate(self._visible):
             if job.media.camera_path == camera_path:
                 idx = self.index(row, COL_NAME)
@@ -185,7 +240,8 @@ class MediaListModel(QAbstractTableModel):
             if index.column() != COL_NAME:
                 return None
             pixmap = self._thumbnails.get(job.media.camera_path)
-            return QIcon(pixmap) if pixmap else None
+            # Mai None: vedi placeholder_icon() per il perché.
+            return QIcon(pixmap) if pixmap else placeholder_icon()
 
         if role == Qt.ItemDataRole.DisplayRole:
             column = index.column()
