@@ -1,3 +1,4 @@
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -5,6 +6,18 @@ from pathlib import Path
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+# Va impostato prima che Qt inizializzi la piattaforma: i test GUI non
+# richiedono un display, e senza questo falliscono in CI o via SSH.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """Un solo QApplication per sessione: Qt non ne ammette due."""
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 class FlakyCamera:
