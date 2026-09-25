@@ -1325,31 +1325,49 @@ Questo è il task più importante del piano: è ciò che rende sopportabile scar
 
 - [ ] **Step 1: Scrivere il server HTTP di test**
 
+> **Modificato in implementazione.** Le stringhe di modalità (`"normal"`, `"no_range"`, `"drop_at_half"`) sono state sostituite da due flag indipendenti `honour_range` e `drop_once`, perché la **combinazione** è il caso reale: la E-M10 Mark IV ignora il `Range` *e* può cadere a metà, e con le stringhe quel caso non era esprimibile. Il server è inoltre `ThreadingHTTPServer` con `Connection: close` su ogni risposta: con `HTTPServer` single-thread e keep-alive HTTP/1.1 l'handler resta in attesa della richiesta successiva e `shutdown()` va in deadlock nel teardown del test.
+
+
 Aggiungere a `tests/conftest.py`:
 
 ```python
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
 
 
 class FlakyCamera:
     """Server HTTP locale che imita la fotocamera, inclusi i suoi difetti.
 
-    mode:
-      "normal"      - serve tutto, onora Range con 206
-      "no_range"    - ignora Range, risponde sempre 200 con il file intero
-      "drop_at_half"- chiude la connessione a metà del corpo, una volta sola
+    I due difetti sono indipendenti e vanno combinabili, perché la
+    combinazione è il caso reale: la E-M10 Mark IV **ignora il Range**, e
+    una caduta a metà su quel firmware costa l'intero file.
+
+    honour_range=False  risponde sempre 200 col file intero, come fa la
+                        fotocamera reale
+    drop_once=True      chiude la connessione a metà del corpo, una sola
+                        volta: il tentativo successivo va a buon fine
     """
 
-    def __init__(self, payload: bytes, mode: str = "normal") -> None:
+    def __init__(self, payload: bytes, *, honour_range: bool = True,
+                 drop_once: bool = False) -> None:
         self.payload = payload
-        self.mode = mode
+        self.honour_range = honour_range
+        self.drop_once = drop_once
         self.dropped = False
         self.requests: list[tuple[str, str | None]] = []
 
         camera = self
 
         class Handler(BaseHTTPRequestHandler):
+            # HTTP/1.1 perché serve il Content-Length per far rilevare al
+            # client il corpo troncato, ma ogni risposta chiude la
+            # connessione: in keep-alive l'handler resterebbe in attesa
+            # della richiesta successiva e shutdown() non rientrerebbe.
+            protocol_version = "HTTP/1.1"
+
             def log_message(self, *args):
                 pass   # silenzio nei test
 
@@ -1358,21 +1376,24 @@ class FlakyCamera:
                 camera.requests.append((self.path, rng))
 
                 start = 0
-                if rng and camera.mode != "no_range":
+                if rng and camera.honour_range:
                     start = int(rng.removeprefix("bytes=").split("-")[0])
                     self.send_response(206)
                     self.send_header(
                         "Content-Range",
-                        f"bytes {start}-{len(camera.payload) - 1}/{len(camera.payload)}",
+                        f"bytes {start}-{len(camera.payload) - 1}"
+                        f"/{len(camera.payload)}",
                     )
                 else:
                     self.send_response(200)
 
                 body = camera.payload[start:]
                 self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
                 self.end_headers()
+                self.close_connection = True
 
-                if camera.mode == "drop_at_half" and not camera.dropped:
+                if camera.drop_once and not camera.dropped:
                     camera.dropped = True
                     self.wfile.write(body[: len(body) // 2])
                     self.wfile.flush()
@@ -1381,8 +1402,9 @@ class FlakyCamera:
 
                 self.wfile.write(body)
 
-        self._server = HTTPServer(("127.0.0.1", 0), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever,
+                                        daemon=True)
 
     @property
     def base_url(self) -> str:
@@ -1411,7 +1433,7 @@ from olympus_connect.core.errors import CameraAsleep
 from olympus_connect.core.protocol import OlympusClient
 from tests.conftest import FlakyCamera
 
-PAYLOAD = bytes(range(256)) * 400   # 102400 byte, > 1 chunk da 64 KiB
+PAYLOAD = bytes(range(256)) * 1600   # 409600 byte, piu chunk da 64 KiB
 
 
 def job_for(tmp_path, size=len(PAYLOAD)):
