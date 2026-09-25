@@ -175,3 +175,118 @@ def test_diagnose_raises_network_unavailable_when_nmcli_hangs():
 
     with pytest.raises(NetworkUnavailable):
         CameraNetwork(runner=hanging).diagnose()
+
+
+# --- profilo NetworkManager ------------------------------------------------
+
+def test_profile_name_is_namespaced():
+    # Il profilo deve essere riconoscibile come nostro: non tocchiamo
+    # e non sovrascriviamo mai le connessioni esistenti dell'utente.
+    assert CameraNetwork(ssid="OM-D E-M10 IV").profile_name == \
+        "olympus-connect-OM-D E-M10 IV"
+
+
+def test_profile_exists_checks_nmcli_connection_list():
+    runner = fake_runner({"-f NAME connection show": ok(
+        "FASTWEB-6J936A\nolympus-connect-OM-D E-M10 IV\n")})
+    assert CameraNetwork(ssid="OM-D E-M10 IV", runner=runner).profile_exists()
+
+
+def test_profile_exists_false_when_absent():
+    runner = fake_runner({"-f NAME connection show": ok("FASTWEB-6J936A\n")})
+    assert not CameraNetwork(ssid="OM-D E-M10 IV", runner=runner).profile_exists()
+
+
+def test_ensure_profile_creates_profile_with_never_default():
+    runner = fake_runner({
+        "-f NAME connection show": ok("FASTWEB-6J936A\n"),
+        "connection add": ok(),
+    })
+    CameraNetwork(ssid="CAM", runner=runner).ensure_profile(password="secret123")
+
+    added = next(c for c in runner.calls if "add" in c)
+    joined = " ".join(added)
+    # never-default è ciò che impedisce alla fotocamera di diventare la
+    # default route.
+    assert "ipv4.never-default" in joined
+    assert "connection.autoconnect" in joined
+    assert "ipv4.route-metric" in joined
+    assert "ipv6.method" in joined
+    assert "802-11-wireless.ssid" in joined
+    assert "CAM" in added
+
+
+def test_ensure_profile_passes_password_as_psk():
+    runner = fake_runner({
+        "-f NAME connection show": ok("\n"),
+        "connection add": ok(),
+    })
+    CameraNetwork(ssid="CAM", runner=runner).ensure_profile(password="secret123")
+    joined = " ".join(" ".join(c) for c in runner.calls)
+    assert "wifi-sec.key-mgmt" in joined
+    assert "secret123" in joined
+
+
+def test_ensure_profile_realigns_existing_profile_without_recreating():
+    runner = fake_runner({
+        "-f NAME connection show": ok("olympus-connect-CAM\n"),
+        "connection modify": ok(),
+    })
+    CameraNetwork(ssid="CAM", runner=runner).ensure_profile()
+    assert not any("add" in c for c in runner.calls)
+    modified = next(c for c in runner.calls if "modify" in c)
+    assert "ipv4.never-default" in " ".join(modified)
+
+
+def test_ensure_profile_updates_password_on_existing_profile():
+    runner = fake_runner({
+        "-f NAME connection show": ok("olympus-connect-CAM\n"),
+        "connection modify": ok(),
+    })
+    CameraNetwork(ssid="CAM", runner=runner).ensure_profile(password="nuova")
+    assert any("nuova" in c for c in runner.calls)
+
+
+def test_ensure_profile_without_password_and_without_profile_raises():
+    runner = fake_runner({"-f NAME connection show": ok("FASTWEB-6J936A\n")})
+    with pytest.raises(NetworkUnavailable, match="password"):
+        CameraNetwork(ssid="CAM", runner=runner).ensure_profile()
+
+
+def test_ensure_profile_without_ssid_raises():
+    with pytest.raises(NetworkUnavailable, match="SSID"):
+        CameraNetwork(ssid="", runner=runner_for()).ensure_profile(password="x")
+
+
+def test_ensure_profile_never_touches_other_profiles():
+    # Proprietà di sicurezza: ogni comando che modifica qualcosa deve
+    # nominare il nostro profilo e nessun altro.
+    runner = fake_runner({
+        "-f NAME connection show": ok("FASTWEB-6J936A\nlavoro-vpn\n"),
+        "connection add": ok(),
+    })
+    CameraNetwork(ssid="CAM", runner=runner).ensure_profile(password="x")
+
+    for call in runner.calls:
+        if any(verb in call for verb in ("add", "modify", "delete", "up", "down")):
+            assert "olympus-connect-CAM" in call
+            assert "FASTWEB-6J936A" not in call
+            assert "lavoro-vpn" not in call
+
+
+def test_connect_brings_profile_up():
+    runner = fake_runner({"connection up": ok()})
+    CameraNetwork(ssid="CAM", runner=runner).connect()
+    assert runner.calls[-1] == ["nmcli", "connection", "up", "olympus-connect-CAM"]
+
+
+def test_connect_raises_when_nmcli_fails():
+    runner = fake_runner({"connection up": CommandResult(4, "", "no such device")})
+    with pytest.raises(NetworkUnavailable, match="no such device"):
+        CameraNetwork(ssid="CAM", runner=runner).connect()
+
+
+def test_disconnect_brings_profile_down():
+    runner = fake_runner({"connection down": ok()})
+    CameraNetwork(ssid="CAM", runner=runner).disconnect()
+    assert runner.calls[-1] == ["nmcli", "connection", "down", "olympus-connect-CAM"]

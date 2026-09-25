@@ -17,6 +17,23 @@ CAMERA_PORT = 80
 COMMAND_TIMEOUT = 10
 PROFILE_PREFIX = "olympus-connect-"
 
+# Impostazioni che rendono usabile l'AP della fotocamera su Linux:
+# never-default evita che la fotocamera diventi la default route, la metrica
+# alta la mette dietro alle reti vere, autoconnect disattivato evita agganci
+# a sorpresa, ipv6 disattivato elimina rumore di router advertisement.
+#
+# Nota: con una sola interfaccia Wi-Fi never-default non conserva Internet,
+# perché non esiste un secondo percorso da instradare. Serve a non
+# stravolgere la tabella di routing e a non far riagganciare altre reti a
+# metà trasferimento. Con ethernet o tethering attivi fa invece esattamente
+# ciò che promette.
+PROFILE_SETTINGS = [
+    ("ipv4.never-default", "yes"),
+    ("ipv4.route-metric", "900"),
+    ("ipv6.method", "disabled"),
+    ("connection.autoconnect", "no"),
+]
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -91,6 +108,15 @@ class CameraNetwork:
             raise NetworkUnavailable(
                 "nmcli non ha risposto entro 10 secondi."
             ) from exc
+
+    def _checked(self, *args: str) -> CommandResult:
+        result = self._nmcli(*args)
+        if result.returncode != 0:
+            raise NetworkUnavailable(
+                result.stderr.strip() or
+                f"nmcli {' '.join(args)} è terminato con codice {result.returncode}."
+            )
+        return result
 
     # -- lettura dello stato ----------------------------------------------
 
@@ -177,3 +203,54 @@ class CameraNetwork:
             "nessuna risposta: il Wi-Fi della fotocamera è attivo?",
         ))
         return Diagnosis(rungs)
+
+    # -- profilo NetworkManager -------------------------------------------
+
+    def profile_exists(self) -> bool:
+        result = self._nmcli("-t", "-f", "NAME", "connection", "show")
+        return self.profile_name in result.stdout.splitlines()
+
+    def ensure_profile(self, password: str | None = None) -> None:
+        """Crea o aggiorna il nostro profilo. Non tocca nessun altro profilo.
+
+        La password viene passata a NetworkManager, che la conserva: questa
+        applicazione non la scrive mai su disco.
+        """
+        if not self.ssid:
+            raise NetworkUnavailable("SSID della fotocamera non configurato.")
+
+        settings = [part for setting in PROFILE_SETTINGS for part in setting]
+
+        if not self.profile_exists():
+            if not password:
+                raise NetworkUnavailable(
+                    f"Profilo «{self.profile_name}» assente: serve la password "
+                    "del Wi-Fi della fotocamera per crearlo."
+                )
+            self._checked(
+                "connection", "add",
+                "type", "wifi",
+                "con-name", self.profile_name,
+                "ssid", self.ssid,
+                "--",
+                "802-11-wireless.ssid", self.ssid,
+                "wifi-sec.key-mgmt", "wpa-psk",
+                "wifi-sec.psk", password,
+                *settings,
+            )
+            return
+
+        # Profilo esistente: riallinea le impostazioni, che potrebbero essere
+        # state create da una versione precedente o modificate a mano.
+        self._checked("connection", "modify", self.profile_name, *settings)
+        if password:
+            self._checked(
+                "connection", "modify", self.profile_name,
+                "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+            )
+
+    def connect(self) -> None:
+        self._checked("connection", "up", self.profile_name)
+
+    def disconnect(self) -> None:
+        self._checked("connection", "down", self.profile_name)
