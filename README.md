@@ -155,4 +155,6 @@ I download sono **seriali** per scelta: il server della fotocamera è un microco
 
 ## Licenza
 
-Da scegliere. Se pubblichi il repository, aggiungi un file `LICENSE`: senza di esso il codice è per default *tutti i diritti riservati*, quindi nessuno può riusarlo legalmente. Per un progetto come questo MIT o GPL-3.0 sono le scelte usuali.
+**GNU General Public License v3.0 o successiva** — testo completo in [`LICENSE`](LICENSE).
+
+In breve: puoi usare, studiare, modificare e redistribuire questo software, anche commercialmente, a condizione che le versioni derivate restino sotto la stessa licenza e che ne distribuisci il codice sorgente. Nessuna garanzia.

@@ -3,6 +3,8 @@ name = "olympus-connect"
 version = "0.1.0"
 description = "Scarica foto e video da fotocamere Olympus via Wi-Fi su Linux"
 requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = ["requests", "PyQt6"]
 
 [project.optional-dependencies]

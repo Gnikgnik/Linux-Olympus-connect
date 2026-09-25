@@ -3493,12 +3493,31 @@ Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 
 - [ ] **Step 3: Prima di pubblicare, anonimizzare le fixture**
 
-`tests/fixtures/caminfo.xml` contiene i numeri di serie reali della fotocamera (`BJGA85301`, `25JGA2208`), e l'SSID dell'access point li include. Decisione del 2026-09-24: si lasciano finché il repository resta locale, **si sostituiscono con valori fittizi prima di qualunque pubblicazione**. Nessun test asserisce sul seriale, quindi la sostituzione è sicura.
+> **Correzione:** la prima stesura di questo passo sostituiva i seriali solo in `tests/fixtures/caminfo.xml`. **Era insufficiente:** un `git grep` ne trova 17 occorrenze in **9 file**, compresi i commenti del codice sorgente, i test e tutti i documenti. Sostituire solo la fixture avrebbe lasciato il seriale pubblicato ovunque.
+
+I numeri di serie reali della fotocamera (`BJGA85301`, `25JGA2208`) e l'SSID che li contiene (`E-M10MKIV-P-BJGA85301`) compaiono in:
+
+| File | Natura |
+|---|---|
+| `tests/fixtures/caminfo.xml` | dato registrato dalla fotocamera |
+| `tests/test_network.py`, `tests/test_main_window.py` | valori di esempio nei test |
+| `olympus_connect/core/network.py`, `olympus_connect/gui/main_window.py` | esempi nei commenti |
+| `README.md`, `docs/field-report-2026-09-24.md` | documentazione |
+| `docs/superpowers/specs/…`, `docs/superpowers/plans/…` | spec e questo piano |
+
+Nessun test asserisce sul valore del seriale, quindi la sostituzione è sicura. Sostituzione su tutto il repository:
 
 ```bash
-sed -i 's/BJGA85301/XXXXXXXXX/g; s/25JGA2208/YYYYYYYYY/g' tests/fixtures/caminfo.xml
-.venv/bin/python -m pytest -q   # deve restare verde
+git grep -l "BJGA85301\|25JGA2208" | xargs sed -i \
+  's/BJGA85301/XXXXXXXXX/g; s/25JGA2208/YYYYYYYYY/g'
+git grep -n "BJGA85301\|25JGA2208"   # deve restare vuoto
+.venv/bin/python -m pytest -q        # deve restare verde
 ```
+
+**Attenzione alla cronologia git.** Sostituire i file in un commit nuovo non rimuove i seriali dai commit precedenti: chiunque cloni il repository può recuperarli con `git log -p`. Se questo conta, le opzioni sono due:
+
+- riscrivere la cronologia prima del primo `push` — su un repository mai pubblicato è indolore: `git checkout --orphan pubblicazione && git add -A && git commit` crea un unico commit senza passato
+- accettarlo, valutando che il seriale di una fotocamera è un dato di sensibilità modesta e che l'SSID è comunque trasmesso in chiaro dalla fotocamera stessa ogni volta che il Wi-Fi è attivo
 
 - [ ] **Step 4: Scrivere il `README.md`**
 
