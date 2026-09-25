@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import sys
+from importlib import resources
 from pathlib import Path
 
 from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSlot
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
@@ -413,8 +415,31 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def application_icon() -> QIcon:
+    """Icona dell'applicazione, caricata dal pacchetto.
+
+    Preferisce l'icona installata nel tema di sistema, così un'eventuale
+    personalizzazione dell'utente ha la precedenza; altrimenti ricade sulla
+    copia dentro il pacchetto, che funziona anche senza installazione.
+    """
+    dal_tema = QIcon.fromTheme("olympus-connect")
+    if not dal_tema.isNull():
+        return dal_tema
+
+    risorsa = resources.files("olympus_connect") / "resources/olympus-connect.svg"
+    with resources.as_file(risorsa) as percorso:
+        return QIcon(str(percorso))
+
+
 def main() -> int:
     app = QApplication(sys.argv)
+    # Su Wayland è questo, non il titolo della finestra, che associa la
+    # finestra al file .desktop: senza, il pannello di KDE mostra un'icona
+    # generica e il nome sbagliato.
+    app.setDesktopFileName("olympus-connect")
+    app.setApplicationName("Olympus Connect")
+    app.setWindowIcon(application_icon())
+
     window = MainWindow()
     window.show()
     return app.exec()

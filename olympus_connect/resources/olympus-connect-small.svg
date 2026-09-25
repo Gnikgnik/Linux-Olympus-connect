@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <title>Olympus Connect</title>
+  <!-- Variante per 16-32 px. A quelle dimensioni la versione dettagliata
+       diventa una macchia: qui ci sono solo due onde invece di tre, colori
+       piatti invece di gradienti, forme piu' grandi rispetto alla tela e
+       nessun dettaglio sotto i 2 px. -->
+  <rect width="48" height="48" rx="10" fill="#25313f"/>
+
+  <g fill="none" stroke="#5fd3f3" stroke-width="3.5" stroke-linecap="round">
+    <path d="M 11 14.5 A 14 14 0 0 1 37 14.5"/>
+    <path d="M 18 18 A 7 7 0 0 1 30 18"/>
+  </g>
+
+  <rect x="6" y="21" width="36" height="21" rx="4" fill="#eef2f6"/>
+  <circle cx="24" cy="31.5" r="9" fill="#1d2a38"/>
+  <circle cx="24" cy="31.5" r="6" fill="#4a86c4"/>
+</svg>

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Olympus Connect</title>
+  <defs>
+    <linearGradient id="sfondo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#32465c"/>
+      <stop offset="1" stop-color="#18222e"/>
+    </linearGradient>
+    <linearGradient id="corpo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4f7fa"/>
+      <stop offset="1" stop-color="#cdd7e1"/>
+    </linearGradient>
+    <linearGradient id="vetro" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#6fa8dc"/>
+      <stop offset="1" stop-color="#23507e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="104" fill="url(#sfondo)"/>
+
+  <!-- Onde Wi-Fi emesse dal mirino. Raggi 36/76/116 con tratto 22: il vuoto
+       fra un'onda e l'altra (18 px) deve restare piu' largo di meta' tratto,
+       altrimenti alle dimensioni piccole le onde si fondono in una macchia. -->
+  <g fill="none" stroke="#5fd3f3" stroke-width="22" stroke-linecap="round">
+    <path d="M 147 128.3 A 116 116 0 0 1 365 128.3"/>
+    <path d="M 184.6 142 A 76 76 0 0 1 327.4 142" opacity="0.88"/>
+    <path d="M 222.2 155.7 A 36 36 0 0 1 289.8 155.7" opacity="0.76"/>
+  </g>
+
+  <!-- Mirino -->
+  <rect x="214" y="166" width="84" height="50" rx="14" fill="url(#corpo)"/>
+
+  <!-- Corpo macchina -->
+  <rect x="62" y="204" width="388" height="240" rx="40" fill="url(#corpo)"/>
+
+  <!-- Obiettivo -->
+  <circle cx="256" cy="324" r="98" fill="#1d2a38"/>
+  <circle cx="256" cy="324" r="80" fill="url(#vetro)"/>
+  <circle cx="256" cy="324" r="40" fill="#14202c" opacity="0.55"/>
+  <circle cx="226" cy="294" r="19" fill="#ffffff" opacity="0.5"/>
+</svg>

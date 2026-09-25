@@ -69,10 +69,23 @@ python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[dev]
 
 `--system-site-packages` riusa PyQt6 di sistema invece di ricompilarlo. Conseguenza: nel venv non viene creato lo script `pytest`, quindi i test si lanciano con `.venv/bin/python -m pytest`.
 
+### Voce di menu e icona
+
+```bash
+./install-desktop.sh
+```
+
+Installa la voce nel menu (*Grafica → Fotografia*), l'icona nel tema `hicolor` e il comando `olympus-connect` in `~/.local/bin`. Solo nella home dell'utente: nessun `sudo`, nessuna modifica di sistema. Per rimuovere tutto, `./install-desktop.sh --rimuovi`.
+
+Va rieseguito se sposti la cartella del progetto, perché il file `.desktop` contiene il percorso assoluto del venv.
+
+L'icona esiste in due varianti. Sotto i 48 px quella dettagliata diventa illeggibile — le tre onde Wi-Fi si fondono in una macchia — quindi per 16, 22, 24 e 32 px viene installata una variante semplificata con due onde e colori piatti, che resta nitida.
+
 ## Uso
 
 ```bash
-.venv/bin/python -m olympus_connect
+olympus-connect            # se hai eseguito install-desktop.sh
+.venv/bin/python -m olympus_connect   # altrimenti
 ```
 
 1. Sulla fotocamera, attiva la connessione Wi-Fi verso smartphone
