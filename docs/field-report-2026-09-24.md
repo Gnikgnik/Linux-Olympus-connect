@@ -1,6 +1,6 @@
 # Referto di verifica sul campo — 2026-09-24
 
-Task 0 del piano di implementazione. Fotocamera **Olympus OM-D E-M10 Mark IV**, firmware OI.Share `version 4.50` / `oitrackversion 3.10`, seriale `BJGA85301`, SSID dell'access point `E-M10MKIV-P-BJGA85301`.
+Task 0 del piano di implementazione. Fotocamera **Olympus OM-D E-M10 Mark IV**, firmware OI.Share `version 4.50` / `oitrackversion 3.10`, seriale `XXXXXXXXX`, SSID dell'access point `E-M10MKIV-P-XXXXXXXXX`.
 
 Macchina: CachyOS, kernel 7.2.7, NetworkManager 1.58.1, Python 3.14.7. Interfaccia `wlan0` unica attiva (`enp0s31f6` senza cavo), quindi la macchina è **offline** mentre è collegata alla fotocamera: `diag.py` è progettato per girare senza assistenza e scrivere un referto su file.
 
@@ -70,7 +70,7 @@ Lo scarto di un secondo è la **granularità intrinseca del formato FAT**, che m
 Due comandi che il piano dava per buoni si sono rivelati inutilizzabili, corretti prima dell'implementazione:
 
 1. **`ip route get 192.168.0.10` riesce sempre.** Con il PC sul Wi-Fi di casa l'output era `192.168.0.10 via 192.168.1.254 dev wlan0`, identico alla rotta verso `8.8.8.8`: il gradino avrebbe segnalato OK proprio nello stato che deve rilevare. Verifica corretta: l'indirizzo deve essere **on-link**, cioè la rotta non deve contenere ` via `. Con la fotocamera collegata: `192.168.0.10 dev wlan0 src 192.168.0.3`.
-2. **`nmcli -t -f ACTIVE,SSID device wifi` riportava `no:` per tutte le reti** pur essendo connessi a `FASTWEB-6J936A`. Sostituito con `nmcli -t -f GENERAL.CONNECTION,GENERAL.STATE device show <dev>`, che restituisce il nome del profilo attivo e lo stato `100 (connected)`.
+2. **`nmcli -t -f ACTIVE,SSID device wifi` riportava `no:` per tutte le reti** pur essendo connessi a `casa-wifi`. Sostituito con `nmcli -t -f GENERAL.CONNECTION,GENERAL.STATE device show <dev>`, che restituisce il nome del profilo attivo e lo stato `100 (connected)`.
 
 ## Referto grezzo — passata 1
 
@@ -79,7 +79,7 @@ Olympus Connect — diagnostica (2026-09-24 21:28:17)
 
 == Scala diagnostica ==
   [OK  ] dispositivo Wi-Fi presente — wlan0
-  [OK  ] rete Wi-Fi attiva — wlan0→E-M10MKIV-P-BJGA85301
+  [OK  ] rete Wi-Fi attiva — wlan0→E-M10MKIV-P-XXXXXXXXX
   [OK  ] 192.168.0.10 raggiungibile direttamente (on-link) — 192.168.0.10 dev wlan0 src 192.168.0.3 uid 1000 \ cache
   [OK  ] porta 80 della fotocamera — accetta
 

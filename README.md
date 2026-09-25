@@ -109,7 +109,7 @@ Esegue una scala diagnostica con un gradino per ogni causa distinta, così «non
 
 ```
 [OK  ] dispositivo Wi-Fi presente — wlan0
-[OK  ] rete Wi-Fi attiva — wlan0→E-M10MKIV-P-BJGA85301
+[OK  ] rete Wi-Fi attiva — wlan0→E-M10MKIV-P-XXXXXXXXX
 [OK  ] 192.168.0.10 raggiungibile direttamente (on-link)
 [OK  ] porta 80 della fotocamera — accetta
 ```

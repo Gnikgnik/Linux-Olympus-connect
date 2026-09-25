@@ -111,13 +111,13 @@ def test_diagnose_reports_missing_wifi_device_first():
 
 def test_diagnose_reports_wrong_network_and_names_it():
     net = CameraNetwork(ssid="OM-D E-M10 IV",
-                        runner=runner_for(connection="FASTWEB-6J936A",
+                        runner=runner_for(connection="casa-wifi",
                                           route=VIA_GATEWAY),
                         probe_tcp=lambda: False)
     diagnosis = net.diagnose()
     assert diagnosis.problem == "rete della fotocamera"
     detail = {r.name: r.detail for r in diagnosis.rungs}["rete della fotocamera"]
-    assert "FASTWEB-6J936A" in detail   # deve dire a quale rete si è collegati
+    assert "casa-wifi" in detail   # deve dire a quale rete si è collegati
 
 
 def test_diagnose_accepts_connection_via_our_own_profile():
@@ -188,18 +188,18 @@ def test_profile_name_is_namespaced():
 
 def test_profile_exists_checks_nmcli_connection_list():
     runner = fake_runner({"-f NAME connection show": ok(
-        "FASTWEB-6J936A\nolympus-connect-OM-D E-M10 IV\n")})
+        "casa-wifi\nolympus-connect-OM-D E-M10 IV\n")})
     assert CameraNetwork(ssid="OM-D E-M10 IV", runner=runner).profile_exists()
 
 
 def test_profile_exists_false_when_absent():
-    runner = fake_runner({"-f NAME connection show": ok("FASTWEB-6J936A\n")})
+    runner = fake_runner({"-f NAME connection show": ok("casa-wifi\n")})
     assert not CameraNetwork(ssid="OM-D E-M10 IV", runner=runner).profile_exists()
 
 
 def test_ensure_profile_creates_profile_with_never_default():
     runner = fake_runner({
-        "-f NAME connection show": ok("FASTWEB-6J936A\n"),
+        "-f NAME connection show": ok("casa-wifi\n"),
         "connection add": ok(),
     })
     CameraNetwork(ssid="CAM", runner=runner).ensure_profile(password="secret123")
@@ -248,7 +248,7 @@ def test_ensure_profile_updates_password_on_existing_profile():
 
 
 def test_ensure_profile_without_password_and_without_profile_raises():
-    runner = fake_runner({"-f NAME connection show": ok("FASTWEB-6J936A\n")})
+    runner = fake_runner({"-f NAME connection show": ok("casa-wifi\n")})
     with pytest.raises(NetworkUnavailable, match="password"):
         CameraNetwork(ssid="CAM", runner=runner).ensure_profile()
 
@@ -262,7 +262,7 @@ def test_ensure_profile_never_touches_other_profiles():
     # Proprietà di sicurezza: ogni comando che modifica qualcosa deve
     # nominare il nostro profilo e nessun altro.
     runner = fake_runner({
-        "-f NAME connection show": ok("FASTWEB-6J936A\nlavoro-vpn\n"),
+        "-f NAME connection show": ok("casa-wifi\nlavoro-vpn\n"),
         "connection add": ok(),
     })
     CameraNetwork(ssid="CAM", runner=runner).ensure_profile(password="x")
@@ -270,7 +270,7 @@ def test_ensure_profile_never_touches_other_profiles():
     for call in runner.calls:
         if any(verb in call for verb in ("add", "modify", "delete", "up", "down")):
             assert "olympus-connect-CAM" in call
-            assert "FASTWEB-6J936A" not in call
+            assert "casa-wifi" not in call
             assert "lavoro-vpn" not in call
 
 
@@ -297,28 +297,28 @@ def test_disconnect_brings_profile_down():
 # Output reale di `nmcli -t -f SIGNAL,SSID device wifi list`, che include
 # SSID vuoti (reti nascoste) e duplicati (più access point).
 SCAN = (
-    "87:FASTWEB-6J936A_Plus\n"
-    "87:FASTWEB-6J936A_Plus_5G\n"
-    "77:GUEST-FASTWEB-6J936A\n"
+    "87:casa-plus\n"
+    "87:casa-5G\n"
+    "77:casa-ospiti\n"
     "59:\n"
-    "54:FASTWEB-6J936A\n"
-    "49:TIM-62975449\n"
-    "45:FASTWEB-6J936A\n"
+    "54:casa-wifi\n"
+    "49:vicini-wifi\n"
+    "45:casa-wifi\n"
 )
 
 
 def test_scan_ssids_orders_by_signal_strength():
     runner = fake_runner({"device wifi list": ok(SCAN)})
     found = CameraNetwork(runner=runner).scan_ssids()
-    assert found[0] == "FASTWEB-6J936A_Plus"
-    assert found.index("FASTWEB-6J936A") < found.index("TIM-62975449")
+    assert found[0] == "casa-plus"
+    assert found.index("casa-wifi") < found.index("vicini-wifi")
 
 
 def test_scan_ssids_drops_hidden_and_duplicates():
     runner = fake_runner({"device wifi list": ok(SCAN)})
     found = CameraNetwork(runner=runner).scan_ssids()
     assert "" not in found
-    assert found.count("FASTWEB-6J936A") == 1
+    assert found.count("casa-wifi") == 1
 
 
 def test_scan_ssids_unescapes_colons():
@@ -330,19 +330,19 @@ def test_scan_ssids_unescapes_colons():
 def test_scan_ssids_puts_camera_like_networks_first():
     # L'SSID della fotocamera è lungo e scomodo da digitare: va offerto per
     # primo anche se il segnale è più debole delle reti di casa.
-    scan = "90:FASTWEB-6J936A\n30:E-M10MKIV-P-BJGA85301\n"
+    scan = "90:casa-wifi\n30:E-M10MKIV-P-XXXXXXXXX\n"
     runner = fake_runner({"device wifi list": ok(scan)})
-    assert CameraNetwork(runner=runner).scan_ssids()[0] == "E-M10MKIV-P-BJGA85301"
+    assert CameraNetwork(runner=runner).scan_ssids()[0] == "E-M10MKIV-P-XXXXXXXXX"
 
 
 @pytest.mark.parametrize("ssid,expected", [
-    ("E-M10MKIV-P-BJGA85301", True),
+    ("E-M10MKIV-P-XXXXXXXXX", True),
     ("E-M1MarkIII-P-ABC123", True),
     ("E-PL10-P-XYZ", True),
     ("OM-1-P-123", True),
     ("TG-6-P-456", True),
-    ("FASTWEB-6J936A", False),
-    ("TIM-62975449", False),
+    ("casa-wifi", False),
+    ("vicini-wifi", False),
     ("", False),
 ])
 def test_looks_like_camera(ssid, expected):

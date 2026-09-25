@@ -3495,7 +3495,7 @@ Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 
 > **Correzione:** la prima stesura di questo passo sostituiva i seriali solo in `tests/fixtures/caminfo.xml`. **Era insufficiente:** un `git grep` ne trova 17 occorrenze in **9 file**, compresi i commenti del codice sorgente, i test e tutti i documenti. Sostituire solo la fixture avrebbe lasciato il seriale pubblicato ovunque.
 
-I numeri di serie reali della fotocamera (`BJGA85301`, `25JGA2208`) e l'SSID che li contiene (`E-M10MKIV-P-BJGA85301`) compaiono in:
+I numeri di serie reali della fotocamera (`XXXXXXXXX`, `YYYYYYYYY`) e l'SSID che li contiene (`E-M10MKIV-P-XXXXXXXXX`) compaiono in:
 
 | File | Natura |
 |---|---|
@@ -3508,9 +3508,9 @@ I numeri di serie reali della fotocamera (`BJGA85301`, `25JGA2208`) e l'SSID che
 Nessun test asserisce sul valore del seriale, quindi la sostituzione è sicura. Sostituzione su tutto il repository:
 
 ```bash
-git grep -l "BJGA85301\|25JGA2208" | xargs sed -i \
-  's/BJGA85301/XXXXXXXXX/g; s/25JGA2208/YYYYYYYYY/g'
-git grep -n "BJGA85301\|25JGA2208"   # deve restare vuoto
+git grep -l "XXXXXXXXX\|YYYYYYYYY" | xargs sed -i \
+  's/XXXXXXXXX/XXXXXXXXX/g; s/YYYYYYYYY/YYYYYYYYY/g'
+git grep -n "XXXXXXXXX\|YYYYYYYYY"   # deve restare vuoto
 .venv/bin/python -m pytest -q        # deve restare verde
 ```
 

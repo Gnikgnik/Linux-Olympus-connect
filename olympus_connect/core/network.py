@@ -14,7 +14,7 @@ from typing import Callable
 from .errors import NetworkUnavailable
 
 # Gli access point delle fotocamere Olympus/OM System hanno l'SSID nella
-# forma <modello>-P-<seriale>, per esempio E-M10MKIV-P-BJGA85301. Serve solo
+# forma <modello>-P-<seriale>, per esempio E-M10MKIV-P-XXXXXXXXX. Serve solo
 # a offrirli per primi nell'elenco: un falso negativo costa un po' di
 # scorrimento, non un errore.
 _CAMERA_SSID = re.compile(r"^(E-M\d|E-PL?\d|OM-\d|TG-\d|STYLUS)", re.IGNORECASE)

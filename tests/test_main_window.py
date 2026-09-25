@@ -120,8 +120,8 @@ def test_window_remembers_filters(windows, qapp, settings):
 
 
 def test_window_remembers_ssid(windows, qapp, settings):
-    settings.setValue("ssid", "E-M10MKIV-P-BJGA85301")
-    assert windows(settings).camera_ssid() == "E-M10MKIV-P-BJGA85301"
+    settings.setValue("ssid", "E-M10MKIV-P-XXXXXXXXX")
+    assert windows(settings).camera_ssid() == "E-M10MKIV-P-XXXXXXXXX"
 
 
 # --- stato della rete ------------------------------------------------------
@@ -317,7 +317,7 @@ def test_detailed_view_is_sorted_by_date(windows, qapp, settings, tmp_path):
 
 def test_ask_ssid_offers_the_scanned_networks(windows, qapp, settings, monkeypatch):
     """L'SSID della fotocamera è lungo: va scelto da un elenco, non digitato."""
-    reti = ["E-M10MKIV-P-BJGA85301", "FASTWEB-6J936A"]
+    reti = ["E-M10MKIV-P-XXXXXXXXX", "casa-wifi"]
     win = windows(settings,
                   network_factory=lambda ssid: FakeNetwork(all_green(), reti))
 
@@ -331,7 +331,7 @@ def test_ask_ssid_offers_the_scanned_networks(windows, qapp, settings, monkeypat
     monkeypatch.setattr(
         "olympus_connect.gui.main_window.QInputDialog.getItem", fake_get_item
     )
-    assert win.ask_camera_ssid() == "E-M10MKIV-P-BJGA85301"
+    assert win.ask_camera_ssid() == "E-M10MKIV-P-XXXXXXXXX"
     assert offerti["items"] == reti
     # Deve restare modificabile: una rete nascosta o non ancora visibile
     # va potuta scrivere a mano.

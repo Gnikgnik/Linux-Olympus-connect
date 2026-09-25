@@ -50,36 +50,6 @@ La prima riga della risposta è un'intestazione di versione (`VER_100`) che non 
 Decodifica verificata contro l'EXIF reale: `23626/28090` → `2026-02-10 13:45:52`, contro `13:45:53` letto da `exiv2`. **Lo scarto di un secondo è la granularità intrinseca del formato FAT, non un difetto:** i secondi sono memorizzati in unità da 2. Non "correggere" questa formula.
 
 Bit di `attr`: 1 = read-only, 2 = hidden, 4 = system, 8 = volume, 16 = directory. Solo hidden, system e volume vanno scartati; **read-only è un file normale** e compare nei dati reali. Il bit directory richiede ricorsione. Una directory vuota risponde `404`, che va trattato come lista vuota e non come errore.
-
-## Protocollo
-
-La fotocamera in modalità AP espone un server HTTP su `http://192.168.0.10/`, documentato come *OPC Communication Protocol 1.0a*.
-
-| Endpoint | Uso |
-|---|---|
-| `get_commandlist.cgi` | XML dei comandi supportati dal modello specifico |
-| `get_caminfo.cgi` | modello fotocamera |
-| `switch_cammode.cgi?mode=play` | passaggio a modalità riproduzione, richiesto prima di elencare |
-| `get_imglist.cgi?DIR=/DCIM` | elenco file in formato CSV |
-| `get_thumbnail.cgi?DIR=<path>` | miniatura JPEG |
-| `GET /DCIM/100OLYMP/<file>` | download del file |
-
-Header obbligatori su ogni richiesta: `User-Agent: OI.Share v2`, `Host: 192.168.0.10`.
-
-Formato di una riga di `get_imglist.cgi`:
-
-```
-/DCIM/100OLYMP,P9240123.JPG,17150208,0,19594,45820
- directory      nome         size     attr date  time
-```
-
-`date` e `time` sono in formato FAT a campi di bit:
-
-- anno = `1980 + (date >> 9)`, mese = `(date >> 5) & 15`, giorno = `date & 31`
-- ora = `time >> 11`, minuti = `(time >> 5) & 63`, secondi = `2 * (time & 31)`
-
-Bit di `attr`: 2 = hidden, 4 = system, 8 = volume, 16 = directory. I primi tre si ignorano, il quarto richiede ricorsione. Una directory vuota risponde `404`, che va trattato come lista vuota e non come errore.
-
 ## Decisioni prese
 
 | Decisione | Scelta | Motivo |
@@ -256,7 +226,7 @@ Produce le fixture di test e resta nel repo come strumento di diagnosi permanent
 
 ## Fatti accertati sul campo
 
-Verificati il 2026-09-24 su E-M10 Mark IV, firmware OI.Share `version 4.50`, seriale `BJGA85301`.
+Verificati il 2026-09-24 su E-M10 Mark IV, firmware OI.Share `version 4.50`, seriale `XXXXXXXXX`.
 
 | Domanda | Esito |
 |---|---|

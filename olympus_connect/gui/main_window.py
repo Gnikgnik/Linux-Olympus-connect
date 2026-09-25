@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
         """Chiede l'SSID scegliendolo fra le reti visibili.
 
         L'SSID della fotocamera è lungo e scomodo da digitare
-        (E-M10MKIV-P-BJGA85301), quindi si offre un elenco con le reti che
+        (E-M10MKIV-P-XXXXXXXXX), quindi si offre un elenco con le reti che
         sembrano fotocamere per prime. Resta modificabile: una rete non
         ancora visibile va potuta scrivere a mano, e una scansione fallita
         non deve bloccare la connessione.
