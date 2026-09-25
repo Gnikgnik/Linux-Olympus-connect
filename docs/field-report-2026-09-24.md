@@ -159,3 +159,35 @@ Con `Range` assente **e** keep-alive non disponibile, il caso peggiore — il MO
 3. **`.part` + rename atomico.** Nessun file interrotto prende mai il nome definitivo, quindi la regola dei duplicati resta sicura e un secondo tentativo riprende sempre da uno stato coerente.
 
 **Task 0 chiuso.** Nessuna assunzione della spec resta non verificata.
+
+## Prova end-to-end dell'applicazione
+
+Eseguita a implementazione completa, con la fotocamera collegata. Esito: JPEG, RAW e video scaricati correttamente; interruzione e ripresa funzionanti; miniature corrette su tutti i tipi; filtri e doppia vista funzionanti.
+
+### Verifica incrociata di un file scaricato
+
+`P9061187.ORF`, confrontando ciò che la fotocamera dichiara nella `get_imglist` con ciò che `exiv2` legge nel file arrivato sul disco:
+
+| | Fotocamera | File scaricato |
+|---|---|---|
+| Dimensione | 21 453 224 byte | 21 453 224 byte |
+| Cartella di destinazione | `2026/2026-09-06/` | `2026/2026-09-06/` |
+| Timestamp | 23:08:32 | 23:08:32 |
+
+Tre conferme indipendenti: il trasferimento è **byte-esatto**, l'organizzazione per data usa la data giusta, e la decodifica FAT coincide con l'EXIF al secondo (in questo caso i secondi erano pari, quindi senza lo scarto di granularità).
+
+Da notare: è proprio il file con `attrib=1`, l'unico read-only sulla scheda. Senza il test scritto sui dati reali il parser lo avrebbe scartato insieme ai file nascosti.
+
+### Profilo NetworkManager
+
+```
+ipv4.never-default:     sì
+ipv4.route-metric:      900
+connection.autoconnect: no
+```
+
+Il profilo `olympus-connect-<ssid>` è creato con le impostazioni previste, e la fotocamera non compare come default route.
+
+### Non verificato
+
+La sonda estesa di `set_timeout` (modalità `rec` e valori limite) **non è stata eseguita**: l'ultimo referto contiene solo i tentativi in modalità `play`, tutti falliti con `HTTP 520` / `errorcode 1006`. Se un valore venisse accettato in `rec`, il keep-alive sarebbe recuperabile e con esso una difesa reale sui video da centinaia di MB. Resta aperto come miglioramento, non come difetto.

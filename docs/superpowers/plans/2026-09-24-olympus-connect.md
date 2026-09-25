@@ -3452,7 +3452,9 @@ git commit -m "feat(gui): finestra principale, filtri, coda di download"
 
 ---
 
-### Task 11: Prova end-to-end con la fotocamera e README
+### Task 11: Prova end-to-end con la fotocamera e README — **COMPLETATO 2026-09-24**
+
+> Esito nel [referto sul campo](../../field-report-2026-09-24.md), sezione *Prova end-to-end*. Verifica incrociata su `P9061187.ORF`: dimensione, cartella e timestamp coincidono con quanto dichiara la fotocamera. Restano due voci non eseguite, entrambe non bloccanti: il test su Internet durante il download (impossibile con una sola scheda Wi-Fi) e la sonda estesa di `set_timeout`.
 
 **Files:**
 - Create: `README.md`
@@ -3468,26 +3470,26 @@ git commit -m "feat(gui): finestra principale, filtri, coda di download"
 QT_QPA_PLATFORM=xcb .venv/bin/python -m olympus_connect
 ```
 
-- [ ] **Step 2: Percorrere la lista di verifica manuale**
+- [x] **Step 2: Percorrere la lista di verifica manuale**
 
 Annotare l'esito di ciascun punto in `docs/field-report-2026-09-24.md`:
 
-- [ ] la barra di stato mostra lo stato corretto **prima** di collegarsi alla fotocamera
-- [ ] "Connetti" chiede SSID e password la prima volta, e non le richiede la seconda
-- [ ] `ipv4.never-default yes` risulta impostato sul profilo (`nmcli connection show olympus-connect-<ssid> | grep never-default`), e la connessione alla fotocamera **non** compare come default route (`ip route show default`)
-- [ ] *(solo con una seconda interfaccia attiva: cavo ethernet, tethering USB o dongle Wi-Fi)* la connessione Internet resta funzionante mentre si è collegati alla fotocamera: `ping -c1 1.1.1.1`. **Con una sola scheda Wi-Fi questo test non è eseguibile** e non indica un difetto: `never-default` evita che la fotocamera prenda la default route, ma non può creare un secondo percorso che non esiste
-- [ ] l'elenco si popola e la barra di stato riporta "N da scaricare, M già presenti"
-- [ ] le miniature compaiono scorrendo, e la finestra **non si blocca** durante il caricamento
-- [ ] i filtri JPEG / RAW / Video / Solo non scaricati riducono la griglia come previsto
-- [ ] il download di un JPEG produce un file apribile, con data di modifica pari alla data di scatto
-- [ ] il download di un ORF produce un file che `exiv2` legge: `exiv2 ~/Immagini/Olympus/*/*/*.ORF`
-- [ ] il download di un MOV produce un file riproducibile
-- [ ] "Annulla" durante un MOV lascia un `.part`, e un nuovo download lo riprende invece di ricominciare (verificare con `ls -l` che il `.part` cresca dal valore precedente)
-- [ ] spegnendo il Wi-Fi della fotocamera a metà di un MOV, la coda si mette in pausa con un messaggio comprensibile; riaccendendolo, "Riprova" completa il file (ripartendo da zero, come previsto su questo firmware)
-- [ ] `keep_awake` viene invocato alla connessione e il suo fallimento (atteso su questo firmware: `HTTP 520`, `errorcode 1006`) **non produce nessun errore visibile all'utente** né interrompe il flusso
+- [x] la barra di stato mostra lo stato corretto **prima** di collegarsi alla fotocamera
+- [x] "Connetti" chiede SSID e password la prima volta, e non le richiede la seconda
+- [x] `ipv4.never-default yes` risulta impostato sul profilo (`nmcli connection show olympus-connect-<ssid> | grep never-default`), e la connessione alla fotocamera **non** compare come default route (`ip route show default`)
+- [~] *(non eseguibile su questa macchina: una sola scheda Wi-Fi)*  *(solo con una seconda interfaccia attiva: cavo ethernet, tethering USB o dongle Wi-Fi)* la connessione Internet resta funzionante mentre si è collegati alla fotocamera: `ping -c1 1.1.1.1`. **Con una sola scheda Wi-Fi questo test non è eseguibile** e non indica un difetto: `never-default` evita che la fotocamera prenda la default route, ma non può creare un secondo percorso che non esiste
+- [x] l'elenco si popola e la barra di stato riporta "N da scaricare, M già presenti"
+- [x] le miniature compaiono scorrendo, e la finestra **non si blocca** durante il caricamento
+- [x] i filtri JPEG / RAW / Video / Solo non scaricati riducono la griglia come previsto
+- [x] il download di un JPEG produce un file apribile, con data di modifica pari alla data di scatto
+- [x] il download di un ORF produce un file che `exiv2` legge: `exiv2 ~/Immagini/Olympus/*/*/*.ORF`
+- [x] il download di un MOV produce un file riproducibile
+- [x] "Annulla" durante un MOV lascia un `.part`, e un nuovo download lo riprende invece di ricominciare (verificare con `ls -l` che il `.part` cresca dal valore precedente)
+- [x] spegnendo il Wi-Fi della fotocamera a metà di un MOV, la coda si mette in pausa con un messaggio comprensibile; riaccendendolo, "Riprova" completa il file (ripartendo da zero, come previsto su questo firmware)
+- [x] `keep_awake` viene invocato alla connessione e il suo fallimento (atteso su questo firmware: `HTTP 520`, `errorcode 1006`) **non produce nessun errore visibile all'utente** né interrompe il flusso
 - [ ] rieseguire `./diag.py` per la sonda estesa su `set_timeout` (modalità `rec` e valori limite): se un valore viene accettato, `keep_awake` va corretto di conseguenza e la difesa recuperata
-- [ ] rilanciando il download degli stessi file, tutti risultano "già presenti" e nulla viene ritrasferito
-- [ ] chiudendo la finestra durante un download, il processo termina senza errori e senza restare appeso
+- [x] rilanciando il download degli stessi file, tutti risultano "già presenti" e nulla viene ritrasferito
+- [x] chiudendo la finestra durante un download, il processo termina senza errori e senza restare appeso
 
 - [ ] **Step 3: Prima di pubblicare, anonimizzare le fixture**
 
