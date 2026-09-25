@@ -6,9 +6,9 @@ from pathlib import Path
 
 from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSlot
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QToolBar,
-    QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QInputDialog,
+    QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
+    QStackedWidget, QToolBar, QVBoxLayout, QWidget,
 )
 
 from ..core.downloader import JobState
@@ -16,10 +16,14 @@ from ..core.errors import NetworkUnavailable, OlympusError
 from ..core.model import MediaKind
 from ..core.network import CameraNetwork
 from ..core.protocol import OlympusClient
-from .grid import MediaFilter, MediaGrid, MediaListModel
+from .grid import MediaFilter, MediaGrid, MediaListModel, MediaTable
 from .workers import DownloadWorker, ListWorker, ThumbWorker, describe_error
 
 DEFAULT_DEST = Path.home() / "Immagini" / "Olympus"
+
+VIEW_GRID = "griglia"
+VIEW_TABLE = "elenco"
+VIEW_LABELS = {VIEW_GRID: "Miniature", VIEW_TABLE: "Elenco dettagliato"}
 
 
 class MainWindow(QMainWindow):
@@ -41,6 +45,7 @@ class MainWindow(QMainWindow):
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
+        self._table = MediaTable(self._model)
 
         self._build_ui()
         self.refresh_status()
@@ -56,6 +61,12 @@ class MainWindow(QMainWindow):
         toolbar.addAction("Scarica selezionati", self.on_download_selected)
         toolbar.addSeparator()
         toolbar.addAction("Cartella destinazione…", self.on_choose_destination)
+        toolbar.addSeparator()
+
+        self._view_box = QComboBox()
+        for key in (VIEW_GRID, VIEW_TABLE):
+            self._view_box.addItem(VIEW_LABELS[key], key)
+        toolbar.addWidget(self._view_box)
         toolbar.addSeparator()
 
         self._filter_jpeg = QCheckBox("JPEG")
@@ -89,8 +100,12 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self._resume_button)
         buttons.addStretch()
 
+        self._views = QStackedWidget()
+        self._views.addWidget(self._grid)
+        self._views.addWidget(self._table)
+
         layout = QVBoxLayout()
-        layout.addWidget(self._grid, stretch=1)
+        layout.addWidget(self._views, stretch=1)
         layout.addWidget(self._file_label)
         layout.addWidget(self._file_bar)
         layout.addWidget(self._total_bar)
@@ -100,7 +115,37 @@ class MainWindow(QMainWindow):
         central.setLayout(layout)
         self.setCentralWidget(central)
 
+        self.set_view(str(self._settings.value("view", VIEW_GRID)))
+        self._view_box.currentIndexChanged.connect(self.on_view_changed)
         self.on_filter_changed()
+
+    # -- scelta della vista ------------------------------------------------
+
+    def current_view(self) -> str:
+        return VIEW_TABLE if self._views.currentWidget() is self._table \
+            else VIEW_GRID
+
+    def set_view(self, view: str) -> None:
+        view = view if view in VIEW_LABELS else VIEW_GRID
+        self._views.setCurrentWidget(
+            self._table if view == VIEW_TABLE else self._grid
+        )
+        self._view_box.setCurrentIndex(self._view_box.findData(view))
+        self._settings.setValue("view", view)
+        if view == VIEW_GRID:
+            # Le miniature si chiedono solo quando la griglia è visibile:
+            # nell'elenco dettagliato non servono e sono richieste HTTP
+            # risparmiate alla fotocamera.
+            self._grid.request_visible_thumbnails()
+
+    def on_view_changed(self, _index: int) -> None:
+        self.set_view(self._view_box.currentData())
+
+    def active_view(self):
+        return self._views.currentWidget()
+
+    def selected_jobs(self) -> list:
+        return self.active_view().selected_jobs()
 
     # -- impostazioni -----------------------------------------------------
 
@@ -135,14 +180,38 @@ class MainWindow(QMainWindow):
         failing = next(r for r in diagnosis.rungs if not r.ok)
         self.statusBar().showMessage(f"{failing.name}: {failing.detail}")
 
+    def ask_camera_ssid(self) -> str | None:
+        """Chiede l'SSID scegliendolo fra le reti visibili.
+
+        L'SSID della fotocamera è lungo e scomodo da digitare
+        (E-M10MKIV-P-BJGA85301), quindi si offre un elenco con le reti che
+        sembrano fotocamere per prime. Resta modificabile: una rete non
+        ancora visibile va potuta scrivere a mano, e una scansione fallita
+        non deve bloccare la connessione.
+        """
+        try:
+            reti = self._network_factory(self.camera_ssid()).scan_ssids()
+        except OlympusError:
+            reti = []
+
+        if reti:
+            ssid, accepted = QInputDialog.getItem(
+                self, "Rete della fotocamera",
+                "Scegli la rete mostrata dalla fotocamera:",
+                reti, 0, True,
+            )
+        else:
+            ssid, accepted = QInputDialog.getText(
+                self, "Rete della fotocamera",
+                "SSID mostrato dalla fotocamera:",
+            )
+        return ssid.strip() if accepted and ssid.strip() else None
+
     def on_connect(self) -> None:
         ssid = self.camera_ssid()
         if not ssid:
-            ssid, accepted = QInputDialog.getText(
-                self, "Rete della fotocamera",
-                "SSID mostrato dalla fotocamera:"
-            )
-            if not accepted or not ssid:
+            ssid = self.ask_camera_ssid()
+            if not ssid:
                 return
             self._settings.setValue("ssid", ssid)
 
@@ -207,7 +276,8 @@ class MainWindow(QMainWindow):
         )
 
         self._ensure_thumb_worker()
-        self._grid.request_visible_thumbnails()
+        if self.current_view() == VIEW_GRID:
+            self._grid.request_visible_thumbnails()
 
     def _ensure_thumb_worker(self) -> None:
         """Un solo worker per le miniature, sul proprio thread e col proprio
@@ -243,7 +313,7 @@ class MainWindow(QMainWindow):
         if self._thumb_worker is None:
             return
         self._thumb_worker.set_suspended(suspended)
-        if not suspended:
+        if not suspended and self.current_view() == VIEW_GRID:
             self._grid.request_visible_thumbnails()
 
     @pyqtSlot(str)
@@ -270,7 +340,7 @@ class MainWindow(QMainWindow):
     # -- download ----------------------------------------------------------
 
     def on_download_selected(self) -> None:
-        jobs = self._grid.selected_jobs()
+        jobs = self.selected_jobs()
         if not jobs:
             self.statusBar().showMessage("Nessun file selezionato.", 4000)
             return

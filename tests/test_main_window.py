@@ -64,12 +64,16 @@ def windows(qapp):
 
 
 class FakeNetwork:
-    def __init__(self, diagnosis):
+    def __init__(self, diagnosis, ssids=None):
         self._diagnosis = diagnosis
+        self._ssids = ssids if ssids is not None else []
         self.ssid = "CAM"
 
     def diagnose(self):
         return self._diagnosis
+
+    def scan_ssids(self):
+        return list(self._ssids)
 
 
 def all_green():
@@ -244,6 +248,136 @@ def test_thumbnails_are_suspended_during_download(windows, qapp, settings, tmp_p
     assert win._thumb_worker._suspended
     win._suspend_thumbnails(False)
     assert not win._thumb_worker._suspended
+
+
+# --- scelta della vista ----------------------------------------------------
+
+def test_default_view_is_the_thumbnail_grid(windows, qapp, settings):
+    win = windows(settings)
+    assert win.current_view() == "griglia"
+
+
+def test_view_choice_is_remembered(windows, qapp, settings):
+    first = windows(settings)
+    first.set_view("elenco")
+
+    second = windows(settings)
+    assert second.current_view() == "elenco"
+
+
+def test_switching_view_changes_the_visible_widget(windows, qapp, settings):
+    win = windows(settings)
+    win.set_view("elenco")
+    assert win._views.currentWidget() is win._table
+    win.set_view("griglia")
+    assert win._views.currentWidget() is win._grid
+
+
+def test_both_views_share_one_model(windows, qapp, settings, tmp_path):
+    # Un solo elenco caricato dalla fotocamera, due modi di guardarlo.
+    win = windows(settings)
+    win.on_listed([job("A.JPG", JobState.NEW, tmp_path)])
+    assert win._grid.model() is win._table.model()
+    assert win._table.model().rowCount() == 1
+
+
+def test_download_reads_selection_from_the_active_view(windows, qapp, settings,
+                                                      tmp_path):
+    from PyQt6.QtCore import QItemSelectionModel
+
+    win = windows(settings)
+    win.on_listed([job("A.JPG", JobState.NEW, tmp_path)])
+    win.set_view("elenco")
+
+    win._table.selectionModel().select(
+        win._model.index(0, 0),
+        QItemSelectionModel.SelectionFlag.Select |
+        QItemSelectionModel.SelectionFlag.Rows,
+    )
+    assert [j.media.name for j in win.selected_jobs()] == ["A.JPG"]
+
+
+def test_detailed_view_is_sorted_by_date(windows, qapp, settings, tmp_path):
+    from datetime import datetime as dt
+
+    def dated(name, when):
+        m = MediaFile(f"/DCIM/100OLYMP/{name}", 10, when, MediaKind.JPEG)
+        return Job(m, tmp_path / name, JobState.NEW)
+
+    win = windows(settings)
+    win.set_view("elenco")
+    win.on_listed([dated("NUOVA.JPG", dt(2026, 9, 6)),
+                   dated("VECCHIA.JPG", dt(2020, 1, 1))])
+
+    assert [j.media.name for j in win._model.visible_jobs()] == \
+        ["VECCHIA.JPG", "NUOVA.JPG"]
+
+
+# --- scelta dell'SSID ------------------------------------------------------
+
+def test_ask_ssid_offers_the_scanned_networks(windows, qapp, settings, monkeypatch):
+    """L'SSID della fotocamera è lungo: va scelto da un elenco, non digitato."""
+    reti = ["E-M10MKIV-P-BJGA85301", "FASTWEB-6J936A"]
+    win = windows(settings,
+                  network_factory=lambda ssid: FakeNetwork(all_green(), reti))
+
+    offerti = {}
+
+    def fake_get_item(parent, title, label, items, current, editable):
+        offerti["items"] = list(items)
+        offerti["editable"] = editable
+        return items[0], True
+
+    monkeypatch.setattr(
+        "olympus_connect.gui.main_window.QInputDialog.getItem", fake_get_item
+    )
+    assert win.ask_camera_ssid() == "E-M10MKIV-P-BJGA85301"
+    assert offerti["items"] == reti
+    # Deve restare modificabile: una rete nascosta o non ancora visibile
+    # va potuta scrivere a mano.
+    assert offerti["editable"] is True
+
+
+def test_ask_ssid_falls_back_to_text_input_when_scan_is_empty(
+        windows, qapp, settings, monkeypatch):
+    win = windows(settings,
+                  network_factory=lambda ssid: FakeNetwork(all_green(), []))
+
+    monkeypatch.setattr(
+        "olympus_connect.gui.main_window.QInputDialog.getText",
+        lambda *a, **k: ("SCRITTO-A-MANO", True),
+    )
+    assert win.ask_camera_ssid() == "SCRITTO-A-MANO"
+
+
+def test_ask_ssid_returns_none_when_cancelled(windows, qapp, settings, monkeypatch):
+    win = windows(settings,
+                  network_factory=lambda ssid: FakeNetwork(all_green(), ["A"]))
+    monkeypatch.setattr(
+        "olympus_connect.gui.main_window.QInputDialog.getItem",
+        lambda *a, **k: ("", False),
+    )
+    assert win.ask_camera_ssid() is None
+
+
+def test_ask_ssid_survives_a_failing_scan(windows, qapp, settings, monkeypatch):
+    from olympus_connect.core.errors import NetworkUnavailable
+
+    class NoScan:
+        ssid = ""
+
+        def diagnose(self):
+            return all_green()
+
+        def scan_ssids(self):
+            raise NetworkUnavailable("nmcli assente")
+
+    win = windows(settings, network_factory=lambda ssid: NoScan())
+    monkeypatch.setattr(
+        "olympus_connect.gui.main_window.QInputDialog.getText",
+        lambda *a, **k: ("A-MANO", True),
+    )
+    assert win.ask_camera_ssid() == "A-MANO"
 
 
 def test_paused_enables_retry_and_disables_cancel(windows, qapp, settings):
