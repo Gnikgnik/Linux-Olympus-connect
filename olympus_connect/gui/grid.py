@@ -467,8 +467,8 @@ class ThumbnailDelegate(QStyledItemDelegate):
         nome_icona, colore = _STATE_ICON[job.state]
         if job.state is not JobState.NEW:
             painter.drawPixmap(
-                rect.right() - 21, lastra.bottom() + 4,
-                icons.pixmap(nome_icona, 15,
+                rect.right() - 22, lastra.bottom() + 4,
+                icons.pixmap(nome_icona, 16,
                              theme.ACCENT_INK if selezionato else colore, 2.0),
             )
         painter.restore()

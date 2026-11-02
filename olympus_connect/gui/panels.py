@@ -8,8 +8,10 @@ pannello sparirebbe e basta.
 from __future__ import annotations
 
 from PyQt6.QtCore import (
-    QEasingCurve, QPropertyAnimation, QSize, Qt, pyqtProperty, pyqtSignal,
+    QEasingCurve, QPropertyAnimation, QRect, QSize, Qt, pyqtProperty,
+    pyqtSignal,
 )
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
@@ -30,6 +32,56 @@ class Separator(QFrame):
         super().__init__()
         self.setObjectName("separator")
         self.setFixedHeight(1)
+
+
+class VerticalLabel(QWidget):
+    """Il nome del pannello, ruotato, nella colonna richiusa.
+
+    Una colonna di 36 px con una sola icona non dice che cosa contiene:
+    chi l'ha richiusa deve poter ritrovare ciò che ha nascosto senza
+    aprirla per tentativi.
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self._text = text
+        self.setFixedWidth(22)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed,
+                           QSizePolicy.Policy.Expanding)
+
+    def sizeHint(self) -> QSize:
+        # Senza un sizeHint proprio il widget vale zero in altezza e non
+        # disegna nulla: un widget personalizzato deve dichiarare quanto
+        # spazio vuole, non aspettarselo.
+        return QSize(22, 160)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(22, 80)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setPen(QColor(theme.TEXT_FAINT))
+        font = painter.font()
+        font.setPointSize(8)
+        font.setLetterSpacing(font.SpacingType.AbsoluteSpacing, 1.2)
+        painter.setFont(font)
+
+        # Si ruota il sistema di riferimento e si disegna dentro un
+        # rettangolo largo quanto l'altezza del widget e alto quanto la sua
+        # larghezza: cosi' il testo non puo' finire fuori dai bordi, che e'
+        # quello che succede traslando a occhio.
+        painter.translate(0, self.height())
+        painter.rotate(-90)
+        painter.drawText(
+            QRect(6, 0, self.height() - 12, self.width()),
+            # AlignRight nello spazio ruotato = in alto nella colonna, di
+            # fianco al pulsante a cui l'etichetta si riferisce. AlignLeft
+            # la spediva in fondo, a 600 px dal suo comando.
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            self._text.upper(),
+        )
+        painter.end()
 
 
 class CollapsiblePanel(QFrame):
@@ -104,6 +156,12 @@ class CollapsiblePanel(QFrame):
         self._filler.setSizePolicy(QSizePolicy.Policy.Expanding,
                                    QSizePolicy.Policy.Expanding)
         self._filler.setVisible(False)
+        riempimento = QVBoxLayout(self._filler)
+        riempimento.setContentsMargins(0, 2, 0, 0)
+        self._vertical_title = VerticalLabel(title)
+        # Nessun flag di allineamento: con uno, Qt assegna al widget il suo
+        # sizeHint invece di lasciarlo espandere, e l'etichetta si accorcia.
+        riempimento.addWidget(self._vertical_title, 1)
 
         outer.addWidget(self._header_widget)
         outer.addWidget(self.body, 1)

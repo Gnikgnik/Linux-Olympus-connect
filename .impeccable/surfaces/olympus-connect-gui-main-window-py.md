@@ -23,7 +23,7 @@ Da non toccare: il core non importa Qt, i download restano seriali, nessuna canc
 
 **FIRST VIEWPORT.** Tre zone orizzontali sopra una barra di stato. A sinistra un rail da 232 px: stato della connessione con il modello della fotocamera, conteggi per tipo come righe-filtro cliccabili con il peso in GB, destinazione. Al centro la griglia di miniature o l'elenco, con il selettore di vista e l'azione primaria in una barra sottile sopra. A destra un pannello da 300 px: anteprima grande del file selezionato più i suoi dati. Entrambi i laterali si richiudono a 36 px con un click. In basso, su una riga sola: file in corso, avanzamento, velocità, tempo stimato. L'azione primaria «Scarica selezionati» sta in alto al centro, in ciano pieno, unico elemento saturo a riposo.
 
-**FORM.** Direzione fissata dal brief (stile Lightroom): batte il sorteggio, quindi nessun concept-seed. Prima in lista perché è l'unica che il brief ammette. seed: none (unavailable)
+**FORM.** Direzione fissata dal brief (stile Lightroom): batte il sorteggio, quindi nessun concept-seed. Prima in lista perché è l'unica che il brief ammette. seed: none (direzione fissata dal brief, nessun sorteggio)
 
 **FINISH.** unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 

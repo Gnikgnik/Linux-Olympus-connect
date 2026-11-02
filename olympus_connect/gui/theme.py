@@ -42,8 +42,8 @@ SIZE_TITLE = 16
 # -- metriche --------------------------------------------------------------
 
 RAIL_WIDTH = 232
-PANEL_WIDTH = 300
-COLLAPSED = 34
+PANEL_WIDTH = 348      # l'anteprima e' limitata dalla larghezza, non dall'altezza
+COLLAPSED = 36        # come il contratto di direzione
 RADIUS = 4
 DURATION = 180           # ms: dentro i 150-250 di una UI in cui si lavora
 

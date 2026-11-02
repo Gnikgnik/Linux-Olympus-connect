@@ -106,7 +106,11 @@ def pixmap(name: str, size: int, color: str, dpr: float = 1.0) -> QPixmap:
     pm.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    renderer.render(painter, QRectF(0, 0, size * dpr, size * dpr))
+    # Coordinate LOGICHE, non fisiche: il painter su un pixmap con
+    # devicePixelRatio e' gia' scalato, e passargli size*dpr disegna al
+    # doppio ritagliando tutto al quadrante superiore sinistro. Ogni icona
+    # dell'applicazione e' stata spedita cosi' finche' non e' emerso.
+    renderer.render(painter, QRectF(0, 0, size, size))
     painter.end()
     return pm
 

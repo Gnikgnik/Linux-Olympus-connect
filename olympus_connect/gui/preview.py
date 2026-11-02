@@ -29,7 +29,7 @@ class PreviewView(QLabel):
         self.setMinimumHeight(160)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
-                           QSizePolicy.Policy.Preferred)
+                           QSizePolicy.Policy.Expanding)
         self.setStyleSheet(
             f"background: {theme.SUNKEN};"
             f"border: 1px solid {theme.LINE};"
@@ -60,7 +60,6 @@ class PreviewView(QLabel):
     def show_message(self, text: str) -> None:
         self._pixmap = None
         self._opacity = 1.0
-        self.setMaximumHeight(220)
         self.setText(text)
         self.update()
 
@@ -86,21 +85,15 @@ class PreviewView(QLabel):
         return self._pixmap is not None
 
     def _apply_aspect(self) -> None:
-        """L'altezza segue le proporzioni dello scatto.
+        """Nessun limite di altezza.
 
-        Lasciando espandere il riquadro, una foto 4:3 lascia sopra e sotto
-        due fasce vuote alte quanto l'immagine, e i dettagli finiscono
-        spinti in fondo al pannello.
+        L'immagine e' limitata dalla larghezza del pannello, non
+        dall'altezza: comprimere il riquadro all'altezza dell'immagine non
+        la ingrandiva di un pixel e lasciava un vuoto sotto i dettagli. Ora
+        il riquadro prende lo spazio disponibile e i dettagli stanno in
+        fondo; le proporzioni le tiene paintEvent.
         """
-        if self._pixmap is None or self._pixmap.width() == 0:
-            self.setMaximumHeight(16_777_215)
-            return
-        proporzione = self._pixmap.height() / self._pixmap.width()
-        self.setMaximumHeight(max(160, int(self.width() * proporzione) + 2))
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._apply_aspect()
+        return
 
     # -- disegno --------------------------------------------------------
 

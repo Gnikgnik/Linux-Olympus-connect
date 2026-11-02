@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(centrale)
 
         self.statusBar().setSizeGripEnabled(False)
+        self._install_transfer_widgets()
 
         self.set_view(str(self._settings.value("view", VIEW_GRID)))
         self._view_grid.clicked.connect(lambda: self.set_view(VIEW_GRID))
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
         self._connect_button.clicked.connect(self.on_connect)
         self._refresh_button = QPushButton()
         self._refresh_button.setIcon(icons.icon("refresh", theme.TEXT, theme.TEXT_FAINT, 18))
-        self._refresh_button.setToolTip("Rileggi l'elenco dalla fotocamera")
+        self._refresh_button.setToolTip("Aggiorna l'elenco")
         self._refresh_button.setIconSize(QSize(18, 18))
         self._refresh_button.setFixedWidth(34)
         self._refresh_button.clicked.connect(self.on_refresh)
@@ -172,6 +173,11 @@ class MainWindow(QMainWindow):
         self._only_new = QPushButton("  Solo non scaricati")
         self._only_new.setObjectName("filterRow")
         self._only_new.setCheckable(True)
+        # Le quattro righe-filtro appartengono a una sola classe visiva:
+        # una senza segno disegnato stonava con le tre sopra.
+        self._only_new.setIcon(
+            icons.icon("download", theme.TEXT_DIM, theme.TEXT_FAINT, 18))
+        self._only_new.setIconSize(QSize(18, 18))
         self._only_new.setChecked(
             self._settings.value("filter/only_new", False, type=bool))
         self._only_new.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -209,9 +215,14 @@ class MainWindow(QMainWindow):
         pulsante.setSizePolicy(QSizePolicy.Policy.Expanding,
                                QSizePolicy.Policy.Fixed)
 
+        # Il peso sta sulla riga, non in un tooltip: la domanda che la riga
+        # esiste per sostenere non e' «ci sono RAW» ma «quanto spazio sono»,
+        # e una risposta che compare solo al passaggio del mouse non la
+        # sostiene.
         conteggio = _label("—", "faint")
         conteggio.setAlignment(Qt.AlignmentFlag.AlignRight
                                | Qt.AlignmentFlag.AlignVCenter)
+        conteggio.setMinimumWidth(66)
 
         contenitore = QWidget()
         riga = QHBoxLayout(contenitore)
@@ -241,8 +252,6 @@ class MainWindow(QMainWindow):
         self._views.addWidget(self._table)
         self._views.addWidget(self._build_empty_state())
         colonna.addWidget(self._views, 1)
-
-        colonna.addWidget(self._build_transfer_bar())
         return contenitore
 
     def _build_topbar(self) -> QWidget:
@@ -308,57 +317,57 @@ class MainWindow(QMainWindow):
         colonna.addWidget(self._empty_hint)
         return vuoto
 
-    def _build_transfer_bar(self) -> QWidget:
-        barra = QFrame()
-        barra.setObjectName("topbar")
-        barra.setFixedHeight(62)
-        colonna = QVBoxLayout(barra)
-        colonna.setContentsMargins(10, 7, 10, 7)
-        colonna.setSpacing(5)
+    def _install_transfer_widgets(self) -> None:
+        """I comandi di trasferimento vivono nella barra di stato.
 
-        riga = QHBoxLayout()
-        riga.setSpacing(8)
-        self._file_label = _label("Nessun trasferimento in corso", "dim")
+        Una striscia separata sopra la barra di stato dava due righe di
+        stato in fondo dove il contratto ne prometteva una, e a riposo
+        mostrava una vaschetta vuota e un pulsante disattivato che non
+        servivano a nessuno.
+        """
+        barra = self.statusBar()
+
+        self._file_label = _label("", "dim")
+        self._file_bar = QProgressBar()
+        self._file_bar.setObjectName("file")
+        self._file_bar.setTextVisible(False)
+        self._file_bar.setFixedSize(64, 4)
+        self._total_bar = QProgressBar()
+        self._total_bar.setObjectName("total")
+        self._total_bar.setTextVisible(False)
+        self._total_bar.setFixedSize(132, 5)
         self._rate_label = _label("", "faint")
-        self._rate_label.setAlignment(Qt.AlignmentFlag.AlignRight
-                                      | Qt.AlignmentFlag.AlignVCenter)
 
         self._cancel_button = QPushButton()
         self._cancel_button.setObjectName("ghost")
         self._cancel_button.setIcon(icons.icon("close", theme.TEXT_DIM,
                                                theme.LINE_STRONG, 18))
         self._cancel_button.setIconSize(QSize(18, 18))
-        self._cancel_button.setToolTip("Annulla")
-        self._cancel_button.setEnabled(False)
+        self._cancel_button.setToolTip("Annulla il trasferimento")
         self._cancel_button.clicked.connect(self.on_cancel)
 
         self._resume_button = QPushButton("Riprova")
         self._resume_button.setObjectName("ghost")
         self._resume_button.setIcon(icons.icon("retry", theme.WARN,
                                                theme.LINE_STRONG, 18))
-        self._resume_button.setEnabled(False)
         self._resume_button.setIconSize(QSize(18, 18))
         self._resume_button.clicked.connect(self.on_resume)
 
-        riga.addWidget(self._file_label, 1)
-        riga.addWidget(self._rate_label)
-        riga.addWidget(self._resume_button)
-        riga.addWidget(self._cancel_button)
-        colonna.addLayout(riga)
+        self._transfer_widgets = (
+            self._file_label, self._file_bar, self._total_bar,
+            self._rate_label, self._cancel_button,
+        )
+        for widget in self._transfer_widgets:
+            barra.addPermanentWidget(widget)
+        barra.addPermanentWidget(self._resume_button)
+        self._show_transfer(False)
 
-        # Impilate, non affiancate: due barre fianco a fianco si leggono
-        # come una barra sola spezzata a meta'.
-        self._file_bar = QProgressBar()
-        self._file_bar.setObjectName("file")
-        self._file_bar.setTextVisible(False)
-        self._file_bar.setFixedHeight(3)
-        self._total_bar = QProgressBar()
-        self._total_bar.setObjectName("total")
-        self._total_bar.setTextVisible(False)
-        self._total_bar.setFixedHeight(5)
-        colonna.addWidget(self._file_bar)
-        colonna.addWidget(self._total_bar)
-        return barra
+    def _show_transfer(self, attivo: bool, con_riprova: bool = False) -> None:
+        for widget in self._transfer_widgets:
+            widget.setVisible(attivo)
+        self._cancel_button.setEnabled(attivo)
+        self._resume_button.setVisible(con_riprova)
+        self._resume_button.setEnabled(con_riprova)
 
     # -- ispettore --------------------------------------------------------
 
@@ -367,8 +376,12 @@ class MainWindow(QMainWindow):
         corpo = pannello.layout_body()
 
         self._preview = PreviewView()
-        corpo.addWidget(self._preview, 1)
+        corpo.addWidget(self._preview, 3)
 
+        # Lo spaziatore va PRIMA dell'intestazione, non fra l'intestazione
+        # e le sue righe: altrimenti «DETTAGLI» resta orfana in mezzo al
+        # pannello e le righe scendono in fondo da sole.
+        corpo.addStretch(1)
         corpo.addWidget(SectionLabel("Dettagli"))
         self._details = QGridLayout()
         self._details.setContentsMargins(0, 0, 0, 0)
@@ -384,8 +397,10 @@ class MainWindow(QMainWindow):
             valore.setWordWrap(True)
             self._details.addWidget(valore, riga, 1)
             self._detail_values[nome] = valore
+        # I dettagli ancorati in fondo: lo spazio avanzato va all'anteprima,
+        # che e' la mossa caratteristica di questa interfaccia, invece di
+        # restare un vuoto sotto l'ultima riga.
         corpo.addLayout(self._details)
-        corpo.addStretch(1)
         return pannello
 
     # ------------------------------------------------------------------
@@ -436,7 +451,7 @@ class MainWindow(QMainWindow):
                                        "Collegata", True)
             else:
                 self._set_camera_state("Fotocamera pronta",
-                                       "Raggiungibile · premi Aggiorna", True)
+                                       "Raggiungibile · premi Connetti", True)
             return
 
         failing = next(r for r in diagnosis.rungs if not r.ok)
@@ -548,8 +563,7 @@ class MainWindow(QMainWindow):
             totale_file += quanti
             totale_byte += byte
             etichetta = self._kind_counts[kind]
-            etichetta.setText(f"{quanti}" if quanti else "—")
-            etichetta.setToolTip(format_size(byte) if quanti else "")
+            etichetta.setText(f"{quanti}\n{format_size(byte)}" if quanti else "—")
         self._card_total.setText(
             f"{totale_file} file · {format_size(totale_byte)}" if totale_file
             else "Nessun file letto")
@@ -748,8 +762,7 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self.on_download_finished)
 
         self._download_worker = worker
-        self._cancel_button.setEnabled(True)
-        self._resume_button.setEnabled(False)
+        self._show_transfer(True)
         self._start_on_thread(worker, worker.run)
 
     @pyqtSlot(str)
@@ -788,35 +801,33 @@ class MainWindow(QMainWindow):
     def on_cancel(self) -> None:
         if self._download_worker is not None:
             self._download_worker.cancel()
+        self._show_transfer(True, con_riprova=True)
         self._cancel_button.setEnabled(False)
-        self._resume_button.setEnabled(True)
         self._suspend_thumbnails(False)
         self._file_label.setText("Trasferimento annullato")
 
     def on_resume(self) -> None:
         if self._download_worker is None:
             return
-        self._resume_button.setEnabled(False)
-        self._cancel_button.setEnabled(True)
+        self._show_transfer(True)
         self._suspend_thumbnails(True)
         self._download_worker.resume()
 
     @pyqtSlot(str)
     def on_paused(self, message: str) -> None:
         self.statusBar().showMessage(message)
-        self._file_label.setText("In pausa: la fotocamera si è disconnessa")
+        self._show_transfer(True, con_riprova=True)
         self._cancel_button.setEnabled(False)
-        self._resume_button.setEnabled(True)
+        self._file_label.setText("In pausa: la fotocamera si è disconnessa")
         self._suspend_thumbnails(False)
 
     @pyqtSlot()
     def on_download_finished(self) -> None:
-        self._file_label.setText("Nessun trasferimento in corso")
+        self._file_label.setText("")
         self._rate_label.setText("")
         self._file_bar.setValue(0)
         self._total_bar.setValue(0)
-        self._cancel_button.setEnabled(False)
-        self._resume_button.setEnabled(False)
+        self._show_transfer(False)
         self._suspend_thumbnails(False)
         self.statusBar().showMessage("Download completato.")
         self.on_refresh()
