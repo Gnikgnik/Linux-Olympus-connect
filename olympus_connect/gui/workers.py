@@ -3,11 +3,14 @@ l'unico punto in cui i due mondi si incontrano."""
 from __future__ import annotations
 
 import errno
+import time
 from pathlib import Path
+from typing import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from ..core.downloader import Job, Outcome, download, pending, plan
+from ..core.stats import TransferStats
 from ..core.errors import (
     CameraAsleep, CameraNotReachable, IncompleteDownload, NetworkUnavailable,
     ProtocolError, WrongNetwork,
@@ -106,6 +109,46 @@ class ThumbWorker(QObject):
             self.failed.emit(camera_path, describe_error(exc))
 
 
+class PreviewWorker(QObject):
+    """Anteprima grande del file selezionato, su richiesta.
+
+    Client proprio, come ogni altro worker: requests.Session non e'
+    thread-safe. Si sospende durante i download, perche' un'anteprima da
+    1 MB che compete con un trasferimento rallenta entrambi.
+    """
+
+    ready = pyqtSignal(str, bytes)
+    failed = pyqtSignal(str, str)
+    unavailable = pyqtSignal(str)
+
+    def __init__(self, client) -> None:
+        super().__init__()
+        self._client = client
+        self._suspended = False
+
+    @pyqtSlot(bool)
+    def set_suspended(self, suspended: bool) -> None:
+        self._suspended = suspended
+
+    @pyqtSlot(str)
+    def request(self, camera_path: str) -> None:
+        if self._suspended:
+            return
+        # Tutto dentro il try, compreso l'interrogazione delle capacita':
+        # questo slot e' invocato da Qt attraverso una connessione in coda,
+        # e un'eccezione che sfugge da qui non risale a un chiamante Python
+        # ma fa abortire il processo.
+        try:
+            if not self._client.has_screennail():
+                # Altri modelli potrebbero non averlo: si dichiara una volta
+                # invece di fallire a ogni selezione.
+                self.unavailable.emit(camera_path)
+                return
+            self.ready.emit(camera_path, self._client.screennail(camera_path))
+        except Exception as exc:
+            self.failed.emit(camera_path, describe_error(exc))
+
+
 class DownloadWorker(QObject):
     """Esegue una coda di download seriali, con pausa e ripresa.
 
@@ -118,17 +161,21 @@ class DownloadWorker(QObject):
     file_progress = pyqtSignal(int, int)
     total_progress = pyqtSignal(int, int)
     file_done = pyqtSignal(str)
+    file_completed = pyqtSignal(str)        # camera_path, per aggiornare l'elenco
+    stats_changed = pyqtSignal(int, int, object, object)   # scritti, totale, B/s, s
     file_failed = pyqtSignal(str, str)
     paused = pyqtSignal(str)
     finished = pyqtSignal()
 
-    def __init__(self, client, jobs: list[Job]) -> None:
+    def __init__(self, client, jobs: list[Job],
+                 clock: Callable[[], float] = time.monotonic) -> None:
         super().__init__()
         self._client = client
         self._queue = list(pending(jobs))
         self._total = sum(j.media.size for j in self._queue)
         self._completed_bytes = 0
         self._cancelled = False
+        self._stats = TransferStats(self._total, clock=clock)
 
     def remaining(self) -> int:
         return len(self._queue)
@@ -151,9 +198,12 @@ class DownloadWorker(QObject):
             self.file_started.emit(job.media.name)
 
             def on_progress(written: int, total: int) -> None:
+                complessivi = self._completed_bytes + written
                 self.file_progress.emit(written, total)
-                self.total_progress.emit(self._completed_bytes + written,
-                                         self._total)
+                self.total_progress.emit(complessivi, self._total)
+                self._stats.update(complessivi)
+                self.stats_changed.emit(complessivi, self._total,
+                                        self._stats.speed(), self._stats.eta())
 
             try:
                 outcome = download(
@@ -177,6 +227,10 @@ class DownloadWorker(QObject):
             self._queue.pop(0)
             self._completed_bytes += job.media.size
             self.total_progress.emit(self._completed_bytes, self._total)
+            self._stats.update(self._completed_bytes)
+            self.stats_changed.emit(self._completed_bytes, self._total,
+                                    self._stats.speed(), self._stats.eta())
+            self.file_completed.emit(job.media.camera_path)
             self.file_done.emit(job.media.name)
 
         self.finished.emit()

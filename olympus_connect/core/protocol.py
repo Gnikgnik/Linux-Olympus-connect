@@ -170,6 +170,21 @@ class OlympusClient:
         """Miniatura JPEG. Verificata funzionante su JPG, ORF e MOV (8-13 KB)."""
         return self._get_ok("get_thumbnail.cgi", DIR=camera_path).content
 
+    def has_screennail(self) -> bool:
+        """La fotocamera genera anteprime grandi?
+
+        Verificato sulla E-M10 Mark IV: caminfo dichiara
+        GetImageScreennailSupport e l'endpoint restituisce circa 1 MB anche
+        per un ORF. Dove manca, l'anteprima si disattiva invece di produrre
+        un errore a ogni selezione.
+        """
+        return "get_screennail" in self.commands
+
+    def screennail(self, camera_path: str) -> bytes:
+        """Anteprima JPEG grande: permette di giudicare uno scatto prima di
+        scaricarlo, cosa che una miniatura da 9 KB non consente."""
+        return self._get_ok("get_screennail.cgi", DIR=camera_path).content
+
     # -- download ---------------------------------------------------------
 
     @contextmanager

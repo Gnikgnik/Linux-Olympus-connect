@@ -38,7 +38,7 @@ def test_model_tooltip_mentions_size_and_kind(qapp):
     model = MediaListModel()
     model.set_jobs([job("A.ORF", kind=MediaKind.RAW, size=20_000_000)])
     tip = model.data(model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
-    assert "A.ORF" in tip and "19.1 MB" in tip and "raw" in tip
+    assert "A.ORF" in tip and "20.0 MB" in tip and "raw" in tip
 
 
 def test_model_tooltip_handles_missing_date(qapp):
@@ -244,7 +244,7 @@ def test_model_column_values(qapp):
     assert row[0] == "A.ORF"
     assert "24/09/2026" in row[1]
     assert row[2] == "RAW"
-    assert row[3] == "20.0 MB"
+    assert row[3] == "21.0 MB"
     assert row[4] == "già presente"
 
 
@@ -394,3 +394,69 @@ def _tiny_png() -> bytes:
     buffer.open(QBuffer.OpenModeFlag.WriteOnly)
     assert pixmap.save(buffer, "PNG")
     return bytes(data)
+
+
+# --- stato dal vivo e icone disegnate ---------------------------------------
+
+def test_no_unicode_glyphs_are_used_as_icons(qapp):
+    """Il craft floor vieta glifi Unicode come icone: hanno peso e metriche
+    estranei al resto e tradiscono un'interfaccia assemblata."""
+    from pathlib import Path as _P
+    sorgente = _P("olympus_connect/gui/grid.py").read_text()
+    for glifo in ("✓", "⟳", "✔", "●", "▸", "→"):
+        assert glifo not in sorgente, f"glifo {glifo!r} usato come icona"
+
+
+def test_state_column_carries_a_drawn_icon(qapp):
+    model = MediaListModel()
+    model.set_jobs([job("A.JPG", state=JobState.PRESENT)])
+    from olympus_connect.gui.grid import COL_STATE
+    decorazione = model.data(model.index(0, COL_STATE),
+                             Qt.ItemDataRole.DecorationRole)
+    assert decorazione is not None
+
+
+def test_set_job_state_updates_the_row_live(qapp):
+    # Durante un download l'elenco deve avanzare sotto gli occhi.
+    model = MediaListModel()
+    model.set_jobs([job("A.JPG", state=JobState.NEW)])
+    cambiate = []
+    model.dataChanged.connect(lambda tl, br, roles: cambiate.append(tl.row()))
+
+    assert model.set_job_state("/DCIM/100OLYMP/A.JPG", JobState.PRESENT) is True
+    assert cambiate == [0]
+    assert model.visible_jobs()[0].state is JobState.PRESENT
+    from olympus_connect.gui.grid import COL_STATE
+    assert model.data(model.index(0, COL_STATE),
+                      Qt.ItemDataRole.DisplayRole) == "già presente"
+
+
+def test_set_job_state_for_unknown_path_is_ignored(qapp):
+    model = MediaListModel()
+    model.set_jobs([job("A.JPG")])
+    assert model.set_job_state("/DCIM/100OLYMP/FANTASMA.JPG",
+                               JobState.PRESENT) is False
+
+
+def test_set_job_state_respects_the_only_new_filter(qapp):
+    # Con «solo non scaricati» attivo, un file completato esce dalla vista.
+    model = MediaListModel()
+    model.set_jobs([job("A.JPG", state=JobState.NEW),
+                    job("B.JPG", state=JobState.NEW)])
+    model.set_filter(MediaFilter(kinds=None, only_new=True))
+    assert model.rowCount() == 2
+    model.set_job_state("/DCIM/100OLYMP/A.JPG", JobState.PRESENT)
+    assert [j.media.name for j in model.visible_jobs()] == ["B.JPG"]
+
+
+def test_counts_by_kind_for_the_filter_rail(qapp):
+    model = MediaListModel()
+    model.set_jobs([
+        job("A.ORF", kind=MediaKind.RAW, size=20_000_000),
+        job("B.ORF", kind=MediaKind.RAW, size=20_000_000),
+        job("C.MOV", kind=MediaKind.MOVIE, size=900_000_000),
+    ])
+    conteggi = model.counts_by_kind()
+    assert conteggi[MediaKind.RAW] == (2, 40_000_000)
+    assert conteggi[MediaKind.MOVIE] == (1, 900_000_000)
+    assert conteggi[MediaKind.JPEG] == (0, 0)

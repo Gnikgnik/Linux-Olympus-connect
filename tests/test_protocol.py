@@ -15,6 +15,10 @@ COMMANDLIST = (
     b'<cgi name="get_thumbnail"><http_method type="get"/></cgi>'
     b'</oishare>'
 )
+COMMANDLIST_WITH_SCREENNAIL = COMMANDLIST.replace(
+    b'</oishare>',
+    b'<cgi name="get_screennail"><http_method type="get"/></cgi></oishare>',
+)
 COMMANDLIST_WITH_TIMEOUT = COMMANDLIST.replace(
     b'</oishare>',
     b'<cgi name="set_timeout"><http_method type="get"/></cgi></oishare>',
@@ -139,6 +143,30 @@ def test_list_media_raises_protocol_error_on_unexpected_status(requests_mock):
 def test_thumbnail_returns_bytes(requests_mock):
     requests_mock.get(f"{BASE_URL}/get_thumbnail.cgi", content=b"\xff\xd8jpeg")
     assert OlympusClient().thumbnail("/DCIM/100OLYMP/P9240123.JPG") == b"\xff\xd8jpeg"
+
+
+def test_screennail_returns_bytes(requests_mock):
+    # Anteprima grande: circa 1 MB anche per i RAW (misurato sul campo).
+    # È ciò che permette di giudicare uno scatto prima di scaricarlo.
+    requests_mock.get(f"{BASE_URL}/get_screennail.cgi", content=b"\xff\xd8grande")
+    assert OlympusClient().screennail("/DCIM/100OLYMP/A.ORF") == b"\xff\xd8grande"
+    assert requests_mock.last_request.qs["dir"] == ["/dcim/100olymp/a.orf"]
+
+
+def test_has_screennail_reads_the_commandlist(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_commandlist.cgi", content=COMMANDLIST_WITH_SCREENNAIL)
+    requests_mock.get(f"{BASE_URL}/get_caminfo.cgi", content=CAMINFO)
+    client = OlympusClient()
+    client.connect()
+    assert client.has_screennail() is True
+
+
+def test_has_screennail_false_when_camera_lacks_it():
+    # Altri modelli potrebbero non dichiararlo: l'anteprima si disattiva
+    # invece di produrre errori a ogni selezione.
+    client = OlympusClient()
+    client.commands = {"get_thumbnail"}
+    assert client.has_screennail() is False
 
 
 def test_open_stream_reports_total_from_content_length(requests_mock):

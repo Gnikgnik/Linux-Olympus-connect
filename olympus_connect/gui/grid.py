@@ -13,12 +13,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractTableModel, QModelIndex, QRect, QSize, Qt, QVariantAnimation,
+    pyqtSignal,
+)
+from PyQt6.QtCore import QEasingCurve
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QListView, QTreeView
+from PyQt6.QtWidgets import (
+    QAbstractItemView, QHeaderView, QListView, QStyle, QStyledItemDelegate,
+    QTreeView,
+)
 
 from ..core.downloader import Job, JobState
+from . import icons, theme
 from ..core.model import MediaKind
+from ..core.stats import format_size as _format_size
 
 JOB_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -27,10 +36,10 @@ THUMBNAIL_SIZE = QSize(160, 120)
 COLUMNS = ["Nome", "Data e ora", "Tipo", "Dimensione", "Stato"]
 COL_NAME, COL_DATE, COL_KIND, COL_SIZE, COL_STATE = range(5)
 
-_STATE_SUFFIX = {
-    JobState.NEW: "",
-    JobState.PRESENT: "  ✓",
-    JobState.INCOMPLETE: "  ⟳",
+_STATE_ICON = {
+    JobState.NEW: ("pending", theme.TEXT_DIM),
+    JobState.PRESENT: ("check", theme.OK),
+    JobState.INCOMPLETE: ("retry", theme.WARN),
 }
 
 _STATE_TEXT = {
@@ -106,11 +115,6 @@ def _fit_to_thumbnail(pixmap: QPixmap) -> QPixmap:
     return canvas
 
 
-def _format_size(size: int) -> str:
-    megabytes = size / 1_048_576
-    if megabytes >= 1024:
-        return f"{megabytes / 1024:.2f} GB"
-    return f"{megabytes:.1f} MB"
 
 
 @dataclass(frozen=True)
@@ -138,6 +142,8 @@ class MediaListModel(QAbstractTableModel):
         self._all: list[Job] = []
         self._visible: list[Job] = []
         self._thumbnails: dict[str, QPixmap] = {}
+        self._fade: dict[str, float] = {}
+        self._animations: dict[str, QVariantAnimation] = {}
         self._filter = MediaFilter()
         self._sort_column = COL_DATE
         self._sort_order = Qt.SortOrder.AscendingOrder
@@ -188,6 +194,47 @@ class MediaListModel(QAbstractTableModel):
     def visible_jobs(self) -> list[Job]:
         return list(self._visible)
 
+    def counts_by_kind(self) -> dict[MediaKind, tuple[int, int]]:
+        """Quanti file e quanti byte per tipo, per le righe-filtro del rail.
+
+        Conta su tutti i job, non sui visibili: un filtro non deve cambiare
+        i numeri che servono a decidere quale filtro attivare.
+        """
+        conteggi = {k: [0, 0] for k in MediaKind}
+        for job in self._all:
+            voce = conteggi[job.media.kind]
+            voce[0] += 1
+            voce[1] += job.media.size
+        return {k: (v[0], v[1]) for k, v in conteggi.items()}
+
+    def set_job_state(self, camera_path: str, state: JobState) -> bool:
+        """Aggiorna lo stato di un file mentre la coda avanza.
+
+        Se il filtro «solo non scaricati» è attivo, il file completato esce
+        dalla vista: è la risposta coerente, non un caso da ignorare.
+        """
+        for indice, job in enumerate(self._all):
+            if job.media.camera_path != camera_path:
+                continue
+            aggiornato = Job(job.media, job.dest, state)
+            self._all[indice] = aggiornato
+            if not self._filter.matches(aggiornato):
+                self.beginResetModel()
+                self._reapply_filter()
+                self.endResetModel()
+                return True
+            for riga, visibile in enumerate(self._visible):
+                if visibile.media.camera_path == camera_path:
+                    self._visible[riga] = aggiornato
+                    self.dataChanged.emit(self.index(riga, COL_NAME),
+                                          self.index(riga, COL_STATE))
+                    break
+            return True
+        return False
+
+    def thumbnail_opacity(self, camera_path: str) -> float:
+        return self._fade.get(camera_path, 1.0)
+
     def job_at(self, index: QModelIndex) -> Job | None:
         if not index.isValid() or index.row() >= len(self._visible):
             return None
@@ -203,12 +250,43 @@ class MediaListModel(QAbstractTableModel):
         if not pixmap.loadFromData(data):
             return False    # byte non decodificabili: nessun crash, nessuna icona
         self._thumbnails[camera_path] = _fit_to_thumbnail(pixmap)
+        self._start_fade(camera_path)
         for row, job in enumerate(self._visible):
             if job.media.camera_path == camera_path:
                 idx = self.index(row, COL_NAME)
                 self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
                 break
         return True
+
+    def _start_fade(self, camera_path: str) -> None:
+        """Le miniature arrivano dalla rete a ritmo irregolare: comparire di
+        colpo a metà di uno scorrimento è un lampo. La dissolvenza dice che
+        è arrivato qualcosa, non decora."""
+        vecchia = self._animations.pop(camera_path, None)
+        if vecchia is not None:
+            vecchia.stop()
+
+        animazione = QVariantAnimation(self)
+        animazione.setDuration(theme.DURATION)
+        # Da un valore gia' visibile: vedi preview.py per il motivo.
+        animazione.setStartValue(0.4)
+        animazione.setEndValue(1.0)
+        animazione.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        def passo(valore):
+            self._fade[camera_path] = float(valore)
+            for riga, job in enumerate(self._visible):
+                if job.media.camera_path == camera_path:
+                    idx = self.index(riga, COL_NAME)
+                    self.dataChanged.emit(idx, idx,
+                                          [Qt.ItemDataRole.DecorationRole])
+                    break
+
+        animazione.valueChanged.connect(passo)
+        animazione.finished.connect(
+            lambda: self._animations.pop(camera_path, None))
+        self._animations[camera_path] = animazione
+        animazione.start()
 
     # -- interfaccia QAbstractTableModel -----------------------------------
 
@@ -237,6 +315,9 @@ class MediaListModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DecorationRole:
             # Solo la prima colonna porta la miniatura: nella griglia è
             # l'unica visibile, nell'elenco sarebbe rumore sulle altre.
+            if index.column() == COL_STATE:
+                nome, colore = _STATE_ICON[job.state]
+                return icons.icon(nome, colore, size=14)
             if index.column() != COL_NAME:
                 return None
             pixmap = self._thumbnails.get(job.media.camera_path)
@@ -261,7 +342,7 @@ class MediaListModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ToolTipRole:
             when = job.media.shot_at.strftime("%d/%m/%Y %H:%M") \
                 if job.media.shot_at else "data sconosciuta"
-            return (f"{job.media.name}{_STATE_SUFFIX[job.state]}\n"
+            return (f"{job.media.name}  ·  {_STATE_TEXT[job.state]}\n"
                     f"{when} — {_format_size(job.media.size)} — "
                     f"{job.media.kind.value}")
 
@@ -302,6 +383,95 @@ class MediaTable(QTreeView, _JobSelection):
         self.sortByColumn(COL_DATE, Qt.SortOrder.AscendingOrder)
         self.header().setSectionResizeMode(COL_NAME,
                                            QHeaderView.ResizeMode.Stretch)
+        self.setIconSize(QSize(22, 22))
+
+    def size_columns(self) -> None:
+        """Le colonne di dato si dimensionano sul contenuto: con una
+        larghezza fissa la data finiva troncata in «01/01/2020 …», che e'
+        peggio che non mostrarla."""
+        for colonna in (COL_DATE, COL_KIND, COL_SIZE, COL_STATE):
+            self.header().setSectionResizeMode(
+                colonna, QHeaderView.ResizeMode.ResizeToContents)
+
+
+CELL = QSize(THUMBNAIL_SIZE.width() + 22, THUMBNAIL_SIZE.height() + 40)
+
+
+class ThumbnailDelegate(QStyledItemDelegate):
+    """Disegna la cella: lastra, miniatura, nome, pastiglia di stato.
+
+    Lo stile predefinito disegnerebbe l'icona e il testo con margini che non
+    appartengono a questo sistema, e non saprebbe nulla della dissolvenza.
+    """
+
+    def sizeHint(self, option, index) -> QSize:
+        # Dimensione fissa: la cella non deve cambiare quando arriva la
+        # miniatura, altrimenti l'immagine viene disegnata dentro un
+        # rettangolo misurato sul solo testo e si vede una striscia.
+        return CELL
+
+    def paint(self, painter: QPainter, option, index) -> None:
+        model = index.model()
+        job = model.data(index, JOB_ROLE)
+        if job is None:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        rect = option.rect.adjusted(3, 3, -3, -3)
+        selezionato = bool(option.state & QStyle.StateFlag.State_Selected)
+        sotto_mouse = bool(option.state & QStyle.StateFlag.State_MouseOver)
+
+        lastra = QRect(rect.x(), rect.y(), rect.width(),
+                       THUMBNAIL_SIZE.height() + 8)
+        if selezionato:
+            painter.setBrush(QColor(theme.ACCENT))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(rect, theme.RADIUS + 1, theme.RADIUS + 1)
+        elif sotto_mouse:
+            painter.setBrush(QColor(theme.SURFACE))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(rect, theme.RADIUS + 1, theme.RADIUS + 1)
+
+        # La miniatura sta su un suo riquadro scuro: le foto chiare non
+        # devono sanguinare nel fondo del pannello.
+        painter.setBrush(QColor(theme.SHELL if not selezionato else "#15383f"))
+        painter.setPen(QColor(theme.LINE))
+        painter.drawRoundedRect(lastra.adjusted(4, 4, -4, 0), theme.RADIUS,
+                                theme.RADIUS)
+
+        pixmap = model._thumbnails.get(job.media.camera_path)
+        if pixmap is not None:
+            painter.setOpacity(model.thumbnail_opacity(job.media.camera_path))
+            x = lastra.x() + (lastra.width() - pixmap.width()) // 2
+            y = lastra.y() + 5 + (THUMBNAIL_SIZE.height() - pixmap.height()) // 2
+            painter.drawPixmap(x, y, pixmap)
+            painter.setOpacity(1.0)
+
+        nome_rect = QRect(rect.x() + 6, lastra.bottom() + 4,
+                          rect.width() - 30, 16)
+        painter.setPen(QColor(theme.ACCENT_INK if selezionato else theme.TEXT_DIM))
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+        painter.drawText(
+            nome_rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            option.fontMetrics.elidedText(job.media.name,
+                                          Qt.TextElideMode.ElideMiddle,
+                                          nome_rect.width()),
+        )
+
+        nome_icona, colore = _STATE_ICON[job.state]
+        if job.state is not JobState.NEW:
+            painter.drawPixmap(
+                rect.right() - 21, lastra.bottom() + 4,
+                icons.pixmap(nome_icona, 15,
+                             theme.ACCENT_INK if selezionato else colore, 2.0),
+            )
+        painter.restore()
 
 
 class MediaGrid(QListView, _JobSelection):
@@ -313,8 +483,11 @@ class MediaGrid(QListView, _JobSelection):
         self._model = model
         self.setViewMode(QListView.ViewMode.IconMode)
         self.setIconSize(THUMBNAIL_SIZE)
-        self.setGridSize(QSize(THUMBNAIL_SIZE.width() + 24,
-                               THUMBNAIL_SIZE.height() + 40))
+        self.setGridSize(CELL)
+        self.setItemDelegate(ThumbnailDelegate(self))
+        self.setMouseTracking(True)          # serve allo stato hover del delegate
+        self.setSpacing(4)
+        self.setContentsMargins(0, 0, 0, 0)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
         self.setUniformItemSizes(True)

@@ -265,8 +265,11 @@ def test_view_choice_is_remembered(windows, qapp, settings):
     assert second.current_view() == "elenco"
 
 
-def test_switching_view_changes_the_visible_widget(windows, qapp, settings):
+def test_switching_view_changes_the_visible_widget(windows, qapp, settings, tmp_path):
     win = windows(settings)
+    # Con l'elenco vuoto a schermo c'è lo stato vuoto, non le viste: per
+    # verificare il selettore servono dei file.
+    win.on_listed([job("A.JPG", JobState.NEW, tmp_path)])
     win.set_view("elenco")
     assert win._views.currentWidget() is win._table
     win.set_view("griglia")
@@ -391,3 +394,26 @@ def test_retry_button_is_labelled_riprova(windows, qapp, settings):
     # Questo firmware non supporta il Range: il pulsante non deve chiamarsi
     # "Riprendi", perché non riprende — riparte da zero.
     assert windows(settings)._resume_button.text() == "Riprova"
+
+
+def test_progress_bars_survive_a_full_card(windows, qapp, settings):
+    """Regressione: QProgressBar lavora su interi a 32 bit.
+
+    I 23,48 GB di RAW della scheda di riferimento, in byte, sforano il
+    limite: passarli direttamente faceva sollevare OverflowError e chiudere
+    l'applicazione proprio quando si avvia il download più lungo.
+    """
+    win = windows(settings)
+    win._update_total_bar(2_480_000_000, 23_480_000_000)      # non deve sollevare
+    win._update_file_bar(12_400_000, 20_600_000)
+    assert win._total_bar.maximum() <= 2_147_483_647
+    assert 0 < win._total_bar.value() <= win._total_bar.maximum()
+    # Circa il 10,6% di 23,48 GB.
+    frazione = win._total_bar.value() / win._total_bar.maximum()
+    assert 0.09 < frazione < 0.12
+
+
+def test_progress_bar_handles_zero_total(windows, qapp, settings):
+    win = windows(settings)
+    win._update_total_bar(0, 0)
+    assert win._total_bar.maximum() >= 1

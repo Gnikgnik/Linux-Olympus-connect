@@ -308,3 +308,138 @@ def test_download_worker_cancel_stops_queue(qapp, tmp_path, monkeypatch):
 
     assert done == []
     assert worker.remaining() == 2
+
+
+# --- statistiche di avanzamento --------------------------------------------
+
+def test_download_worker_emits_speed_and_eta(qapp, tmp_path, monkeypatch):
+    """Su 27,9 GB la domanda vera è «quanto manca», non «a che punto sono»."""
+    clock = {"t": 0.0}
+
+    def fake_download(client, job, on_progress=None, should_cancel=None, **kw):
+        from olympus_connect.core.downloader import Outcome
+        clock["t"] += 1.0
+        on_progress(job.media.size, job.media.size)
+        return Outcome.DONE
+
+    monkeypatch.setattr("olympus_connect.gui.workers.download", fake_download)
+
+    jobs = [Job(media("A.JPG", 2_000_000), tmp_path / "A.JPG", JobState.NEW),
+            Job(media("B.JPG", 2_000_000), tmp_path / "B.JPG", JobState.NEW)]
+    worker = DownloadWorker(FakeClient(), jobs, clock=lambda: clock["t"])
+
+    letture = []
+    worker.stats_changed.connect(
+        lambda written, total, speed, eta: letture.append((written, total, speed, eta))
+    )
+    worker.run()
+
+    assert letture, "nessuna statistica emessa"
+    written, total, speed, eta = letture[-1]
+    assert total == 4_000_000
+    assert speed is not None and speed > 0
+    assert eta == 0          # a fine coda non manca nulla
+
+
+def test_download_worker_reports_unknown_eta_instead_of_a_made_up_number(
+        qapp, tmp_path, monkeypatch):
+    def stalled(client, job, on_progress=None, should_cancel=None, **kw):
+        from olympus_connect.core.downloader import Outcome
+        on_progress(0, job.media.size)      # nessun byte trasferito
+        return Outcome.CANCELLED
+
+    monkeypatch.setattr("olympus_connect.gui.workers.download", stalled)
+    jobs = [Job(media("A.JPG", 1_000_000), tmp_path / "A.JPG", JobState.NEW)]
+    worker = DownloadWorker(FakeClient(), jobs, clock=lambda: 5.0)
+
+    letture = []
+    worker.stats_changed.connect(lambda w, t, s, e: letture.append(e))
+    worker.run()
+    assert letture and letture[-1] is None
+
+
+def test_download_worker_announces_each_finished_file_by_path(
+        qapp, tmp_path, monkeypatch):
+    # L'elenco deve aggiornarsi sotto gli occhi: serve il path, non solo il
+    # nome, perché è la chiave con cui il modello trova la riga.
+    monkeypatch.setattr("olympus_connect.gui.workers.download", fake_download_ok)
+    jobs = [Job(media("A.JPG", 10), tmp_path / "A.JPG", JobState.NEW)]
+    worker = DownloadWorker(FakeClient(), jobs)
+    fatti = []
+    worker.file_completed.connect(fatti.append)
+    worker.run()
+    assert fatti == ["/DCIM/100OLYMP/A.JPG"]
+
+
+# --- anteprima --------------------------------------------------------------
+
+def test_preview_worker_emits_screennail(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+
+    class ClientConAnteprima(FakeClient):
+        def has_screennail(self):
+            return True
+
+        def screennail(self, camera_path):
+            return b"\xff\xd8grande"
+
+    worker = PreviewWorker(ClientConAnteprima())
+    ricevuti = []
+    worker.ready.connect(lambda p, d: ricevuti.append((p, d)))
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert ricevuti == [("/DCIM/100OLYMP/A.ORF", b"\xff\xd8grande")]
+
+
+def test_preview_worker_is_silent_when_camera_lacks_screennail(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+
+    class SenzaAnteprima(FakeClient):
+        def has_screennail(self):
+            return False
+
+        def screennail(self, camera_path):
+            raise AssertionError("non deve essere chiamato")
+
+    worker = PreviewWorker(SenzaAnteprima())
+    non_disponibile = []
+    worker.unavailable.connect(non_disponibile.append)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert non_disponibile == ["/DCIM/100OLYMP/A.ORF"]
+
+
+def test_preview_worker_skips_while_suspended(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+
+    class ClientConAnteprima(FakeClient):
+        def has_screennail(self):
+            return True
+
+        def screennail(self, camera_path):
+            return b"\xff\xd8x"
+
+    worker = PreviewWorker(ClientConAnteprima())
+    ricevuti = []
+    worker.ready.connect(lambda p, d: ricevuti.append(p))
+    worker.set_suspended(True)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert ricevuti == []
+
+
+def test_preview_worker_survives_a_client_without_the_capability_check(qapp):
+    """Regressione: l'eccezione non deve sfuggire da uno slot in coda.
+
+    request() è invocato da Qt attraverso una QueuedConnection. Un'eccezione
+    che sfugge da lì non risale a un chiamante Python: PyQt fa abortire il
+    processo. Con has_screennail fuori dal try, un client che non espone il
+    metodo chiudeva l'applicazione invece di degradare.
+    """
+    from olympus_connect.gui.workers import PreviewWorker
+
+    class ClientIncompleto:
+        pass        # nessun has_screennail, nessun screennail
+
+    worker = PreviewWorker(ClientIncompleto())
+    errori = []
+    worker.failed.connect(lambda p, m: errori.append(m))
+    worker.request("/DCIM/100OLYMP/A.ORF")      # non deve sollevare
+    assert errori and errori[0]
