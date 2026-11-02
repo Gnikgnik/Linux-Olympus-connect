@@ -29,7 +29,7 @@ class PreviewView(QLabel):
         self.setMinimumHeight(160)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
-                           QSizePolicy.Policy.Expanding)
+                           QSizePolicy.Policy.Fixed)
         self.setStyleSheet(
             f"background: {theme.SUNKEN};"
             f"border: 1px solid {theme.LINE};"
@@ -60,6 +60,7 @@ class PreviewView(QLabel):
     def show_message(self, text: str) -> None:
         self._pixmap = None
         self._opacity = 1.0
+        self.setFixedHeight(200)
         self.setText(text)
         self.update()
 
@@ -85,15 +86,23 @@ class PreviewView(QLabel):
         return self._pixmap is not None
 
     def _apply_aspect(self) -> None:
-        """Nessun limite di altezza.
+        """La cornice si stringe sull'immagine.
 
-        L'immagine e' limitata dalla larghezza del pannello, non
-        dall'altezza: comprimere il riquadro all'altezza dell'immagine non
-        la ingrandiva di un pixel e lasciava un vuoto sotto i dettagli. Ora
-        il riquadro prende lo spazio disponibile e i dettagli stanno in
-        fondo; le proporzioni le tiene paintEvent.
+        Una foto 4:3 in una colonna larga 324 px e' alta 243: dare alla
+        cornice tutta l'altezza del pannello non la ingrandisce, lascia solo
+        due bande vuote dentro il bordo. La cornice segue l'immagine, e lo
+        spazio che avanza sta sotto il blocco invece che dentro di esso.
         """
-        return
+        if self._pixmap is None or self._pixmap.width() == 0:
+            self.setFixedHeight(200)
+            return
+        proporzione = self._pixmap.height() / self._pixmap.width()
+        larghezza = max(self.width(), 1)
+        self.setFixedHeight(max(160, int(larghezza * proporzione) + 2))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_aspect()
 
     # -- disegno --------------------------------------------------------
 

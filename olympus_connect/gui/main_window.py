@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
         self._only_new.setIcon(
             icons.icon("download", theme.TEXT_DIM, theme.TEXT_FAINT, 18))
         self._only_new.setIconSize(QSize(18, 18))
+        self._only_new.setMinimumHeight(32)
         self._only_new.setChecked(
             self._settings.value("filter/only_new", False, type=bool))
         self._only_new.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -203,7 +204,12 @@ class MainWindow(QMainWindow):
     def _build_filter_row(self, kind: MediaKind, icona: str,
                           etichetta: str) -> tuple[QWidget, QLabel]:
         """Una riga-filtro mostra anche quanto pesa: con 1141 RAW la domanda
-        non è «ci sono RAW» ma «quanto spazio sono»."""
+        non è «ci sono RAW» ma «quanto spazio sono».
+
+        Il conteggio vive DENTRO il pulsante, trasparente al mouse: messo
+        accanto, lasciava un terzo della riga fuori dall'area cliccabile e
+        la campitura di selezione si fermava a due terzi.
+        """
         pulsante = QPushButton(f"  {etichetta}")
         pulsante.setObjectName("filterRow")
         pulsante.setCheckable(True)
@@ -212,29 +218,25 @@ class MainWindow(QMainWindow):
         pulsante.setIcon(icons.icon(icona, theme.TEXT_DIM, theme.TEXT_FAINT, 18))
         pulsante.setIconSize(QSize(18, 18))
         pulsante.setCursor(Qt.CursorShape.PointingHandCursor)
+        pulsante.setMinimumHeight(38)
         pulsante.setSizePolicy(QSizePolicy.Policy.Expanding,
                                QSizePolicy.Policy.Fixed)
 
-        # Il peso sta sulla riga, non in un tooltip: la domanda che la riga
-        # esiste per sostenere non e' «ci sono RAW» ma «quanto spazio sono»,
-        # e una risposta che compare solo al passaggio del mouse non la
-        # sostiene.
         conteggio = _label("—", "faint")
         conteggio.setAlignment(Qt.AlignmentFlag.AlignRight
                                | Qt.AlignmentFlag.AlignVCenter)
-        conteggio.setMinimumWidth(66)
+        conteggio.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        conteggio.setStyleSheet("background: transparent;")
 
-        contenitore = QWidget()
-        riga = QHBoxLayout(contenitore)
-        riga.setContentsMargins(0, 0, 0, 0)
-        riga.setSpacing(4)
-        riga.addWidget(pulsante, 1)
-        riga.addWidget(conteggio)
+        dentro = QHBoxLayout(pulsante)
+        dentro.setContentsMargins(0, 0, 10, 0)
+        dentro.addStretch(1)
+        dentro.addWidget(conteggio)
 
         chiave = {MediaKind.JPEG: "jpeg", MediaKind.RAW: "raw",
                   MediaKind.MOVIE: "movie"}[kind]
         self._filter_boxes[chiave] = pulsante
-        return contenitore, conteggio
+        return pulsante, conteggio
 
     # -- area di lavoro ---------------------------------------------------
 
@@ -331,14 +333,17 @@ class MainWindow(QMainWindow):
         self._file_bar = QProgressBar()
         self._file_bar.setObjectName("file")
         self._file_bar.setTextVisible(False)
-        self._file_bar.setFixedSize(64, 4)
+        self._file_bar.setFixedSize(116, 4)
         self._total_bar = QProgressBar()
         self._total_bar.setObjectName("total")
         self._total_bar.setTextVisible(False)
-        self._total_bar.setFixedSize(132, 5)
+        self._total_bar.setFixedSize(210, 5)
         self._rate_label = _label("", "faint")
 
-        self._cancel_button = QPushButton()
+        # Una X senza etichetta nell'angolo in basso a destra di una
+        # finestra si legge «chiudi», non «annulla»: su un trasferimento da
+        # quasi due ore e' l'ambiguita' piu' cara dell'interfaccia.
+        self._cancel_button = QPushButton("Annulla")
         self._cancel_button.setObjectName("ghost")
         self._cancel_button.setIcon(icons.icon("close", theme.TEXT_DIM,
                                                theme.LINE_STRONG, 18))
@@ -376,12 +381,8 @@ class MainWindow(QMainWindow):
         corpo = pannello.layout_body()
 
         self._preview = PreviewView()
-        corpo.addWidget(self._preview, 3)
+        corpo.addWidget(self._preview)
 
-        # Lo spaziatore va PRIMA dell'intestazione, non fra l'intestazione
-        # e le sue righe: altrimenti «DETTAGLI» resta orfana in mezzo al
-        # pannello e le righe scendono in fondo da sole.
-        corpo.addStretch(1)
         corpo.addWidget(SectionLabel("Dettagli"))
         self._details = QGridLayout()
         self._details.setContentsMargins(0, 0, 0, 0)
@@ -397,10 +398,12 @@ class MainWindow(QMainWindow):
             valore.setWordWrap(True)
             self._details.addWidget(valore, riga, 1)
             self._detail_values[nome] = valore
-        # I dettagli ancorati in fondo: lo spazio avanzato va all'anteprima,
-        # che e' la mossa caratteristica di questa interfaccia, invece di
-        # restare un vuoto sotto l'ultima riga.
+        # Anteprima e dettagli formano un blocco unico in alto, e lo spazio
+        # avanzato resta sotto. Dare altezza alla cornice non ingrandisce di
+        # un pixel una foto limitata dalla larghezza: produce solo due
+        # bande vuote dentro il bordo e un buco prima dei dettagli.
         corpo.addLayout(self._details)
+        corpo.addStretch(1)
         return pannello
 
     # ------------------------------------------------------------------
