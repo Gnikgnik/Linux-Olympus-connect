@@ -1,0 +1,538 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T22:41:49Z",
+  "title": "Design System: Olympus Connect",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Darkroom Cyan",
+        "canonical": "#4db8d4",
+        "tonalRamp": [
+          "#182f35",
+          "#255562",
+          "#2d7e94",
+          "#32aaca",
+          "#65bad1",
+          "#97cbd9",
+          "#c5dfe5",
+          "#eef5f6"
+        ]
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Cyan Lifted",
+        "canonical": "#67cbe5",
+        "tonalRamp": [
+          "#163037",
+          "#205867",
+          "#25839c",
+          "#25b2d6",
+          "#5cc0d9",
+          "#92cede",
+          "#c2e0e8",
+          "#eef5f7"
+        ]
+      },
+      "accent-press": {
+        "role": "primary",
+        "displayName": "Cyan Pressed",
+        "canonical": "#3ba3bf",
+        "tonalRamp": [
+          "#1a2d33",
+          "#29535e",
+          "#347a8d",
+          "#3ca4c0",
+          "#6cb6c9",
+          "#9cc8d4",
+          "#c7dde3",
+          "#eff4f6"
+        ]
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Darkroom Ink",
+        "canonical": "#0e1b20",
+        "tonalRamp": [
+          "#1d2a2f",
+          "#304c57",
+          "#406f81",
+          "#4d93ae",
+          "#78aabd",
+          "#a3c1cd",
+          "#cbdadf",
+          "#f0f3f5"
+        ]
+      },
+      "progress-file": {
+        "role": "secondary",
+        "displayName": "Damped Cyan",
+        "canonical": "#3f7f90",
+        "tonalRamp": [
+          "#1d2c2f",
+          "#304f57",
+          "#407481",
+          "#4d9aae",
+          "#78afbd",
+          "#a3c4cd",
+          "#cbdbdf",
+          "#f0f4f5"
+        ]
+      },
+      "ok": {
+        "role": "tertiary",
+        "displayName": "Present Green",
+        "canonical": "#7cc08a",
+        "tonalRamp": [
+          "#1e2e21",
+          "#325539",
+          "#437e4f",
+          "#52a964",
+          "#7cba89",
+          "#a5cbad",
+          "#ccded0",
+          "#f0f5f1"
+        ]
+      },
+      "warn": {
+        "role": "tertiary",
+        "displayName": "Redo Amber",
+        "canonical": "#d8a648",
+        "tonalRamp": [
+          "#362b17",
+          "#644d23",
+          "#97712a",
+          "#cf962d",
+          "#d4ac61",
+          "#dbc395",
+          "#e6dac4",
+          "#f6f4ee"
+        ]
+      },
+      "error": {
+        "role": "tertiary",
+        "displayName": "Failed Red",
+        "canonical": "#e4705a",
+        "tonalRamp": [
+          "#371b15",
+          "#672b20",
+          "#9d3824",
+          "#d74124",
+          "#da705b",
+          "#df9e91",
+          "#e8c8c2",
+          "#f7efee"
+        ]
+      },
+      "shell": {
+        "role": "neutral",
+        "displayName": "Shell",
+        "canonical": "#1b1e21",
+        "tonalRamp": [
+          "#242629",
+          "#3e4348",
+          "#586169",
+          "#717e8a",
+          "#929ba4",
+          "#b3b8bd",
+          "#d2d5d8",
+          "#f2f2f3"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "#232629",
+        "tonalRamp": [
+          "#242628",
+          "#3f4347",
+          "#5a6167",
+          "#747e88",
+          "#949ba2",
+          "#b4b8bc",
+          "#d3d5d7",
+          "#f2f2f3"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#2b2f33",
+        "tonalRamp": [
+          "#242628",
+          "#3f4348",
+          "#596168",
+          "#737e88",
+          "#939ba2",
+          "#b3b8bd",
+          "#d3d5d7",
+          "#f2f2f3"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised",
+        "canonical": "#343a3f",
+        "tonalRamp": [
+          "#242629",
+          "#3f4448",
+          "#596169",
+          "#727f8a",
+          "#929ca3",
+          "#b3b8bd",
+          "#d3d5d8",
+          "#f2f2f3"
+        ]
+      },
+      "sunken": {
+        "role": "neutral",
+        "displayName": "Sunken",
+        "canonical": "#191c1f",
+        "tonalRamp": [
+          "#242629",
+          "#3e4349",
+          "#586169",
+          "#707e8b",
+          "#919ba4",
+          "#b2b8be",
+          "#d2d5d8",
+          "#f2f2f3"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#33383d",
+        "tonalRamp": [
+          "#242628",
+          "#3f4348",
+          "#596168",
+          "#737e89",
+          "#939ba3",
+          "#b3b8bd",
+          "#d3d5d7",
+          "#f2f2f3"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "#3f464c",
+        "tonalRamp": [
+          "#242628",
+          "#3f4448",
+          "#596168",
+          "#727f89",
+          "#939ba3",
+          "#b3b8bd",
+          "#d3d5d8",
+          "#f2f2f3"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "canonical": "#e9ebed",
+        "tonalRamp": [
+          "#242629",
+          "#3e4348",
+          "#586169",
+          "#717e8a",
+          "#929ba4",
+          "#b3b8bd",
+          "#d2d5d8",
+          "#f2f2f3"
+        ]
+      },
+      "text-dim": {
+        "role": "neutral",
+        "displayName": "Text Dim",
+        "canonical": "#a8b0b6",
+        "tonalRamp": [
+          "#242728",
+          "#3f4448",
+          "#596268",
+          "#737f89",
+          "#939ca3",
+          "#b3b9bd",
+          "#d3d5d7",
+          "#f2f2f3"
+        ]
+      },
+      "text-faint": {
+        "role": "neutral",
+        "displayName": "Text Faint",
+        "canonical": "#959ea5",
+        "tonalRamp": [
+          "#242628",
+          "#3f4447",
+          "#5a6167",
+          "#737f88",
+          "#949ca2",
+          "#b4b9bc",
+          "#d3d5d7",
+          "#f2f2f3"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "The empty-state headline in the content area. The largest type in the build."
+      },
+      "strong": {
+        "displayName": "Strong",
+        "purpose": "Panel titles and the primary button label."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default for every widget: buttons, filter rows, list text, inputs. Tabular figures on."
+      },
+      "small": {
+        "displayName": "Small",
+        "purpose": "Metadata values and faint secondary lines in rail and inspector."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase section headings inside panels and table column headers. Always text-faint."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Filename row inside a thumbnail cell and the rotated panel name in a collapsed column."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "duration-state",
+        "value": "180ms",
+        "purpose": "The single duration in the build (theme.DURATION). Panel collapse, preview fade, thumbnail fade."
+      },
+      {
+        "name": "ease-settle",
+        "value": "QEasingCurve.Type.OutCubic",
+        "purpose": "The only curve. Movement leaves decisively and settles, instead of accelerating at the end."
+      },
+      {
+        "name": "fade-from-preview",
+        "value": "0.35 -> 1.0",
+        "purpose": "Preview image arrival. Never starts at 0: an element that exists only because an animation ran reads as missing when the event loop is starved."
+      },
+      {
+        "name": "fade-from-thumbnail",
+        "value": "0.4 -> 1.0",
+        "purpose": "Thumbnail arrival in the grid, driven by QVariantAnimation per file."
+      },
+      {
+        "name": "animated-property-width",
+        "value": "panelWidth (pyqtProperty int)",
+        "purpose": "Panel collapse animates a real Qt property, not a timer calling setFixedWidth."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one saturated control on a resting screen: 'Scarica selezionati' in the command bar.",
+      "html": "<button class=\"ds-btn-primary\"><svg class=\"ds-ico\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10 3v9\"/><path d=\"M6.2 8.6 10 12.4l3.8-3.8\"/><path d=\"M3.5 15.2v1.6h13v-1.6\"/></svg>Scarica selezionati</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 6px; background: #4db8d4; color: #0e1b20; border: 1px solid #4db8d4; border-radius: 4px; padding: 5px 12px; font-size: 13px; font-weight: 600; font-family: system-ui, sans-serif; } .ds-btn-primary .ds-ico { width: 18px; height: 18px; } .ds-btn-primary:hover { background: #67cbe5; border-color: #67cbe5; } .ds-btn-primary:active { background: #3ba3bf; } .ds-btn-primary:focus-visible { outline: none; border-color: #e9ebed; } .ds-btn-primary:disabled { background: #2b2f33; color: #959ea5; border-color: #3f464c; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "The standard control: 'Connetti', 'Annulla il cambio cartella', dialog actions.",
+      "html": "<button class=\"ds-btn\"><svg class=\"ds-ico\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3.2 8.2a10 10 0 0 1 13.6 0\"/><path d=\"M6.4 11.8a5.6 5.6 0 0 1 7.2 0\"/><path d=\"M10 15.6v.2\"/></svg>Connetti</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; background: #2b2f33; color: #e9ebed; border: 1px solid #3f464c; border-radius: 4px; padding: 5px 12px; font-size: 12px; font-family: system-ui, sans-serif; } .ds-btn .ds-ico { width: 18px; height: 18px; } .ds-btn:hover { background: #343a3f; border-color: #4a5258; } .ds-btn:active { background: #191c1f; } .ds-btn:focus-visible { outline: none; border-color: #4db8d4; } .ds-btn:disabled { background: #232629; color: #959ea5; border-color: #33383d; }"
+    },
+    {
+      "name": "Ghost Toggle",
+      "kind": "button",
+      "refersTo": "button-ghost-checked",
+      "description": "The view-mode toggles in the command bar. Checked state fills with surface and turns the glyph cyan.",
+      "html": "<div class=\"ds-toggle-group\"><button class=\"ds-btn-ghost ds-checked\" aria-pressed=\"true\"><svg class=\"ds-ico\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3.2\" y=\"3.2\" width=\"5.6\" height=\"5.6\" rx=\"1\"/><rect x=\"11.2\" y=\"3.2\" width=\"5.6\" height=\"5.6\" rx=\"1\"/><rect x=\"3.2\" y=\"11.2\" width=\"5.6\" height=\"5.6\" rx=\"1\"/><rect x=\"11.2\" y=\"11.2\" width=\"5.6\" height=\"5.6\" rx=\"1\"/></svg></button><button class=\"ds-btn-ghost\"><svg class=\"ds-ico\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 5h14\"/><path d=\"M3 10h14\"/><path d=\"M3 15h14\"/></svg></button></div>",
+      "css": ".ds-toggle-group { display: inline-flex; gap: 6px; background: #232629; padding: 6px 10px; } .ds-btn-ghost { background: transparent; color: #a8b0b6; border: 1px solid transparent; border-radius: 4px; padding: 4px 8px; } .ds-btn-ghost .ds-ico { width: 18px; height: 18px; display: block; } .ds-btn-ghost:hover { background: #2b2f33; color: #e9ebed; } .ds-btn-ghost.ds-checked { background: #2b2f33; color: #4db8d4; border-color: #3f464c; } .ds-btn-ghost:disabled { background: transparent; color: #3f464c; }"
+    },
+    {
+      "name": "Filter Row",
+      "kind": "nav",
+      "refersTo": "filter-row",
+      "description": "A rail row that filters by media kind and carries its own count and weight inside the hit area.",
+      "html": "<div class=\"ds-rail\"><div class=\"ds-section-label\">Contenuto della scheda</div><button class=\"ds-filter-row ds-checked\"><svg class=\"ds-ico\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"4.4\" width=\"14\" height=\"11.2\" rx=\"1.6\"/><path d=\"M3 12.6 7.4 8.8l4 3.6\"/><circle cx=\"13\" cy=\"8\" r=\"1.4\"/></svg><span class=\"ds-filter-name\">RAW</span><span class=\"ds-filter-count\">1141<br>23.48 GB</span></button></div>",
+      "css": ".ds-rail { background: #232629; border-right: 1px solid #33383d; padding: 12px; width: 232px; font-family: system-ui, sans-serif; } .ds-section-label { color: #959ea5; font-size: 10px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; margin-bottom: 8px; } .ds-filter-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; background: transparent; color: #a8b0b6; border: 1px solid transparent; border-radius: 4px; padding: 5px 10px 5px 8px; text-align: left; font-size: 12px; } .ds-filter-row .ds-ico { width: 18px; height: 18px; flex: none; } .ds-filter-name { flex: 1; } .ds-filter-count { color: #959ea5; font-size: 11px; text-align: right; line-height: 1.3; } .ds-filter-row:hover { background: #2b2f33; color: #e9ebed; } .ds-filter-row.ds-checked { background: #2b2f33; color: #e9ebed; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "Sunken field with a hairline border; focus changes the border to cyan and nothing else.",
+      "html": "<input class=\"ds-input\" type=\"text\" value=\"192.168.0.10\" />",
+      "css": ".ds-input { background: #191c1f; color: #e9ebed; border: 1px solid #3f464c; border-radius: 4px; padding: 5px 8px; font-size: 12px; font-family: system-ui, sans-serif; font-variant-numeric: tabular-nums; } .ds-input::selection { background: #4db8d4; color: #0e1b20; } .ds-input:hover { border-color: #4a5258; } .ds-input:focus { outline: none; border-color: #4db8d4; }"
+    },
+    {
+      "name": "Checkbox",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "14px indicator, 3px radius, sunken fill; cyan on hover border and on check.",
+      "html": "<label class=\"ds-check\"><input type=\"checkbox\" checked /><span>Solo non scaricati</span></label>",
+      "css": ".ds-check { display: inline-flex; align-items: center; gap: 7px; color: #a8b0b6; font-size: 12px; font-family: system-ui, sans-serif; } .ds-check input { appearance: none; width: 14px; height: 14px; border: 1px solid #3f464c; border-radius: 3px; background: #191c1f; margin: 0; } .ds-check:hover { color: #e9ebed; } .ds-check:hover input { border-color: #4db8d4; } .ds-check input:checked { background: #4db8d4; border-color: #4db8d4; }"
+    },
+    {
+      "name": "Thumbnail Cell",
+      "kind": "card",
+      "refersTo": "thumbnail-cell",
+      "description": "The signature grid cell: shell-toned plate under the thumbnail, elided filename, state glyph. Selected state fills cyan and darkens the plate.",
+      "html": "<div class=\"ds-cells\"><div class=\"ds-cell\"><div class=\"ds-plate\"></div><div class=\"ds-cell-foot\"><span class=\"ds-cell-name\">P1010737.ORF</span><svg class=\"ds-cell-state\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"#7cc08a\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4.5 10.5 8.3 14.3 15.5 6.2\"/></svg></div></div><div class=\"ds-cell ds-selected\"><div class=\"ds-plate\"></div><div class=\"ds-cell-foot\"><span class=\"ds-cell-name\">P1010740.ORF</span></div></div></div>",
+      "css": ".ds-cells { display: flex; gap: 8px; background: #191c1f; padding: 8px; } .ds-cell { width: 182px; height: 160px; border-radius: 5px; padding: 3px; box-sizing: border-box; font-family: system-ui, sans-serif; } .ds-cell:hover { background: #2b2f33; } .ds-cell.ds-selected { background: #4db8d4; } .ds-plate { height: 128px; margin: 4px 4px 0; background: #1b1e21; border: 1px solid #33383d; border-radius: 4px; } .ds-cell.ds-selected .ds-plate { background: #15383f; } .ds-cell-foot { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 0 6px; } .ds-cell-name { color: #a8b0b6; font-size: 11px; } .ds-cell.ds-selected .ds-cell-name { color: #0e1b20; } .ds-cell-state { width: 16px; height: 16px; }"
+    },
+    {
+      "name": "Preview Frame",
+      "kind": "custom",
+      "refersTo": "preview-frame",
+      "description": "The inspector's large screennail preview. Height is fixed at width x aspect; the image fades in from 0.35, never from 0.",
+      "html": "<div class=\"ds-inspector\"><div class=\"ds-panel-title\">Anteprima</div><div class=\"ds-preview\">Nessun file selezionato</div><div class=\"ds-section-label2\">Dettagli</div><div class=\"ds-detail\"><span class=\"ds-k\">Nome</span><span class=\"ds-v\">P1010740.ORF</span><span class=\"ds-k\">Dimensione</span><span class=\"ds-v\">20.4 MB</span></div></div>",
+      "css": ".ds-inspector { width: 348px; background: #232629; border-left: 1px solid #33383d; padding: 12px; font-family: system-ui, sans-serif; } .ds-panel-title { color: #e9ebed; font-size: 13px; font-weight: 600; margin-bottom: 10px; } .ds-preview { display: flex; align-items: center; justify-content: center; height: 200px; background: #191c1f; border: 1px solid #33383d; border-radius: 4px; color: #959ea5; font-size: 11px; animation: ds-fade 180ms cubic-bezier(0.215,0.61,0.355,1); } @keyframes ds-fade { from { opacity: 0.35; } to { opacity: 1; } } .ds-section-label2 { color: #959ea5; font-size: 10px; font-weight: 600; letter-spacing: 1.1px; text-transform: uppercase; margin: 12px 0 6px; } .ds-detail { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; } .ds-k { color: #959ea5; font-size: 11px; } .ds-v { color: #e9ebed; font-size: 11px; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Status Row",
+      "kind": "custom",
+      "refersTo": "progress-track",
+      "description": "The single bottom status row during a transfer: file label, damped file bar, full-cyan total bar, rate and ETA, cancel. Progress values are permille.",
+      "html": "<div class=\"ds-status\"><span class=\"ds-status-text\">917 da scaricare, 244 gia presenti.</span><span class=\"ds-spacer\"></span><span class=\"ds-status-file\">P1010741.ORF</span><div class=\"ds-bar ds-bar-file\"><i style=\"width:42%\"></i></div><div class=\"ds-bar ds-bar-total\"><i style=\"width:18%\"></i></div><span class=\"ds-status-rate\">3.4 MB/s &middot; 1h 52m</span><button class=\"ds-btn-ghost\">Annulla</button></div>",
+      "css": ".ds-status { display: flex; align-items: center; gap: 10px; background: #232629; border-top: 1px solid #33383d; padding: 6px 10px; color: #a8b0b6; font-size: 11px; font-family: system-ui, sans-serif; font-variant-numeric: tabular-nums; } .ds-spacer { flex: 1; } .ds-status-rate { color: #959ea5; } .ds-bar { background: #191c1f; border-radius: 2px; overflow: hidden; } .ds-bar i { display: block; height: 100%; border-radius: 2px; } .ds-bar-file { width: 116px; height: 4px; } .ds-bar-file i { background: #3f7f90; } .ds-bar-total { width: 210px; height: 5px; } .ds-bar-total i { background: #4db8d4; } .ds-btn-ghost { background: transparent; color: #a8b0b6; border: 1px solid transparent; border-radius: 4px; padding: 4px 8px; font-size: 12px; } .ds-btn-ghost:hover { background: #2b2f33; color: #e9ebed; }"
+    },
+    {
+      "name": "Collapsed Panel Column",
+      "kind": "nav",
+      "refersTo": "button-ghost",
+      "description": "A side panel retracted to 36px: the collapser gains a fill and border so it stays findable, and the rotated panel name says what was hidden.",
+      "html": "<div class=\"ds-collapsed\"><button class=\"ds-collapser\"><svg viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2.8\" y=\"4.2\" width=\"14.4\" height=\"11.6\" rx=\"1.6\"/><path d=\"M8 4.2v11.6\"/></svg></button><div class=\"ds-vertical\">Fotocamera</div></div>",
+      "css": ".ds-collapsed { width: 36px; height: 260px; background: #232629; border-right: 1px solid #33383d; display: flex; flex-direction: column; align-items: center; padding: 9px 5px; font-family: system-ui, sans-serif; } .ds-collapser { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; background: #2b2f33; color: #e9ebed; border: 1px solid #3f464c; border-radius: 4px; padding: 2px; cursor: pointer; } .ds-collapser svg { width: 18px; height: 18px; } .ds-collapser:hover { background: #343a3f; } .ds-vertical { margin-top: 10px; writing-mode: vertical-rl; transform: rotate(180deg); color: #959ea5; font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Digital Darkroom",
+    "overview": "This is a Linux desktop application (PyQt6 on KDE Plasma/Wayland), not a website. There is no HTML, no CSS, no browser, no viewport. The entire visual system lives in one Qt stylesheet plus a QPalette in olympus_connect/gui/theme.py, every token a module constant; icons are authored SVG rasterised through QSvgRenderer; motion is QPropertyAnimation and QVariantAnimation; layout is QLayout. Nothing here translates to or from a web token set, and nothing in it should be restated in rem, breakpoints, or media queries.\n\nThe room is dark because the photographs have to be the only bright thing in it. Three cool-neutral greys stack from the window shell through the panels to the interactive surfaces, with the content area sunk below the shell so the thumbnails sit on the darkest ground available. Depth comes entirely from that tonal stack and from one-pixel hairlines; there is not a single shadow in the build. One cyan carries selection, the primary action, and active state, and nothing else is saturated at rest. Amber, green and red appear only where they carry file-state meaning.\n\nDensity is working density, not showroom density: 38-48px filter rows, 4-12px padding steps, a 46px command bar, a single status row. Both side panels retract to a 36px column with an animated real width, which is this system's entire equivalent of a responsive breakpoint: the vertical constraint of a 1366x768 screen is answered by hiding chrome, never by reflowing a grid.\n\nTwo cosmetic residuals shipped and are recorded here as known deviations, not as rules: the status row's two progress bars sit side by side although a comment in theme.py records that arrangement as previously rejected (\"affiancate si leggevano come una barra sola spezzata\"), tolerable only because the numbers beside them carry the reading; and the rail's kind-filter rows grew to a 48px pitch to hold their two-line count. Neither is a pattern to extend.",
+    "keyCharacteristics": [
+      "Dark, cool-neutral, four-step tonal stack; the content area is the darkest surface",
+      "Exactly one saturated colour at rest (cyan #4db8d4), used for selection, primary action, active state",
+      "Zero shadows; depth is tonal plus 1px hairlines",
+      "One drawn icon set, 20x20 grid, 1.9 stroke, round caps and joins, recoloured at render time",
+      "Motion is 180ms OutCubic and only ever reports state",
+      "Tabular figures everywhere, so numbers do not dance while progress updates"
+    ],
+    "rules": [
+      {
+        "name": "The One Light Source Rule",
+        "body": "The photographs are the brightest thing on screen. No surface, fill or label competes with them; cyan is the only saturated colour at rest and never covers more than a selection.",
+        "section": "colors"
+      },
+      {
+        "name": "The Faint-Text Ceiling Rule",
+        "body": "text-faint is used only on panel, surface and sunken, where it clears 4.5:1. It does not clear 4.5:1 on raised; on raised tone, step up to text-dim.",
+        "section": "colors"
+      },
+      {
+        "name": "The Earned Colour Rule",
+        "body": "Green, amber and red are allowed only where they report file state. A colour that merely decorates is a defect.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Every numeric readout - sizes, rates, counts, percentages - renders with tnum on. A number that changes width while it updates is a bug.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Family Rule",
+        "body": "One system UI family across the whole application. Do not introduce a display face, a monospace column, or an icon font.",
+        "section": "typography"
+      },
+      {
+        "name": "The Retract, Don't Reflow Rule",
+        "body": "The answer to a short screen is a collapsed panel, not a rearranged layout. There are no breakpoints; the only two layout states are panel-expanded and panel-collapsed.",
+        "section": "layout"
+      },
+      {
+        "name": "The Stable Cell Rule",
+        "body": "A cell's size is fixed before its content arrives. sizeHint returns the full cell, the decoration role never returns None for the name column (a placeholder plate of the final thumbnail size stands in), and every thumbnail is padded onto the declared 160x120 canvas. An item that measures itself on text alone will clip the image that arrives later.",
+        "section": "layout"
+      },
+      {
+        "name": "The Declared Size Rule",
+        "body": "A custom-painted widget declares its own sizeHint (and minimumSizeHint). The rotated panel label occupied zero height until it did.",
+        "section": "layout"
+      },
+      {
+        "name": "The Visible Filler Rule",
+        "body": "Qt ignores hidden widgets in a layout, so when a panel body is hidden a visible filler takes its stretch. Without it the layout centres the collapsed header in the middle of the window.",
+        "section": "layout"
+      },
+      {
+        "name": "The No-Shadow Rule",
+        "body": "Depth is tone and hairline. If a surface needs to feel raised, move it one step up the neutral stack; do not add a shadow, glow or gradient.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Sunken Content Rule",
+        "body": "The media area is darker than the window shell. Photographs are the brightest element, so the ground beneath them must be the darkest.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Drawn Icon Rule",
+        "body": "Every icon is SVG path data in icons.py. No Unicode glyphs, no emoji, no icon font: their metrics and weight betray an assembled set rather than a drawn one.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Logical Coordinates Rule",
+        "body": "icons.pixmap renders into QRectF(0, 0, size, size) - never size * dpr. A painter on a pixmap that already carries a devicePixelRatio is already scaled; passing physical coordinates draws at 2x clipped to the top-left quadrant. This was the root cause of every malformed glyph in the build and must never be \"fixed\" back.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Declared Icon Size Rule",
+        "body": "Every button carrying an icon calls setIconSize explicitly (18x18 for chrome, 14-16 in-cell, 22 in the detail list). Without it Qt rescales to its own 16px default with a coarse filter and the icon arrives disfigured.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Visible Fade Rule",
+        "body": "Every fade starts from an already-visible opacity (0.35 preview, 0.4 thumbnail) and ends at 1.0, over 180ms with an OutCubic curve. An element that exists only because an animation ran reads as missing whenever the event loop is starved, and the defect surfaces as \"the thumbnail never arrives\".",
+        "section": "components"
+      },
+      {
+        "name": "The State-Only Motion Rule",
+        "body": "Motion exists to report state: panel retraction, arrival of an image, interpolated progress. 150-250ms, OutCubic, nothing on launch. The product opens inside a task.",
+        "section": "components"
+      },
+      {
+        "name": "The Real Property Rule",
+        "body": "An animated dimension is a real Qt property (panelWidth, fadeOpacity) interpolated by QPropertyAnimation/QVariantAnimation, never a setFixedWidth driven from a timer.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do keep every colour, size, metric and rule in theme.py as a module constant, and reference it from widgets; the stylesheet is generated from those constants.",
+      "Do set the QPalette alongside the stylesheet, so native widgets, tooltips and dialogs the QSS never reaches still belong to the theme.",
+      "Do render icons in logical coordinates - QRectF(0, 0, size, size) - and call setIconSize on every button that carries one.",
+      "Do draw the disabled state of an icon in a chosen colour from the palette rather than letting Qt wash it out to a grey that belongs to no system.",
+      "Do start every fade from a visible opacity (0.35 / 0.4) and end at 1.0.",
+      "Do return a placeholder decoration of the final thumbnail size rather than None, and give every custom widget a sizeHint.",
+      "Do express progress in permille with PROGRESS_SCALE = 1000, and format both sizes and rates on one base, 1000 (core/stats.py), so size / rate equals the ETA shown on screen.",
+      "Do fix the preview frame at width x aspect and let leftover space fall below the block.",
+      "Do keep a visible filler holding the stretch when a panel body is hidden.",
+      "Do restyle scrollbars, headers and tooltips; Qt's defaults belong to no design system."
+    ],
+    "donts": [
+      "Don't add a shadow, glow or gradient. Depth is the tonal stack plus 1px hairlines.",
+      "Don't introduce a second saturated colour, or let cyan spread beyond selection, primary action and active state.",
+      "Don't put text-faint on raised; it fails 4.5:1 there.",
+      "Don't use Unicode glyphs, emoji, or an icon font in place of a drawn icon from icons.py.",
+      "Don't introduce a display face, a second font family, or type sizes outside 10/11/12/13/16px.",
+      "Don't render an icon into size * dpr; that draws at 2x clipped to the top-left quadrant.",
+      "Don't feed a QProgressBar raw byte counts; a 23.48 GB total overflows its 32-bit range.",
+      "Don't animate a dimension with a timer and repeated setFixedWidth when a Qt property will interpolate it.",
+      "Don't add a second status strip above the status bar; the layout promises one status row.",
+      "Don't import web idioms into this system - no rem, no breakpoints, no media queries, no flex/grid vocabulary. Layout is QLayout and the only responsive states are the two collapsible panels."
+    ]
+  }
+}
