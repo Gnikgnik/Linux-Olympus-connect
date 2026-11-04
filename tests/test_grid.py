@@ -460,3 +460,21 @@ def test_counts_by_kind_for_the_filter_rail(qapp):
     assert conteggi[MediaKind.RAW] == (2, 40_000_000)
     assert conteggi[MediaKind.MOVIE] == (1, 900_000_000)
     assert conteggi[MediaKind.JPEG] == (0, 0)
+
+
+def test_grid_does_not_mark_requests_nobody_receives(qapp):
+    """Regressione: senza nessuno collegato a thumbnail_needed la griglia
+    segnava comunque i path come richiesti, e quando il worker arrivava non
+    li chiedeva più. Una richiesta senza destinatario non è una richiesta."""
+    model = MediaListModel()
+    grid = MediaGrid(model)
+    model.set_jobs([job("A.JPG"), job("B.JPG")])
+    grid.resize(400, 300)
+
+    grid.request_visible_thumbnails()        # nessuno in ascolto
+    assert grid._requested == set()
+
+    ricevute = []
+    grid.thumbnail_needed.connect(ricevute.append)
+    grid.request_visible_thumbnails()        # ora qualcuno ascolta
+    assert set(ricevute) == {"/DCIM/100OLYMP/A.JPG", "/DCIM/100OLYMP/B.JPG"}

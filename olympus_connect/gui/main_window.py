@@ -546,6 +546,11 @@ class MainWindow(QMainWindow):
     @pyqtSlot(list)
     def on_listed(self, jobs: list) -> None:
         self._model.set_jobs(jobs)
+        # I worker prima di tutto il resto: on_filter_changed passa da
+        # set_view, che chiede le miniature visibili. Se il collegamento al
+        # worker non esiste ancora, quella richiesta parte nel vuoto.
+        self._ensure_thumb_worker()
+        self._ensure_preview_worker()
         self.on_filter_changed()
         self._refresh_counts()
 
@@ -553,8 +558,6 @@ class MainWindow(QMainWindow):
         present = len(jobs) - new
         self.statusBar().showMessage(f"{new} da scaricare, {present} già presenti.")
 
-        self._ensure_thumb_worker()
-        self._ensure_preview_worker()
         if self.current_view() == VIEW_GRID:
             self._grid.request_visible_thumbnails()
 

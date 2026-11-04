@@ -139,6 +139,13 @@ class PreviewWorker(QObject):
         # e un'eccezione che sfugge da qui non risale a un chiamante Python
         # ma fa abortire il processo.
         try:
+            # Questo worker ha un client proprio, perché requests.Session non
+            # è thread-safe. Un client nuovo non ha mai interrogato la
+            # fotocamera e non ne conosce le capacità: senza questo passo
+            # has_screennail risponde no anche quando la fotocamera le
+            # anteprime le genera. Una volta sola, sul thread del worker.
+            if not getattr(self._client, "commands", None):
+                self._client.connect()
             if not self._client.has_screennail():
                 # Altri modelli potrebbero non averlo: si dichiara una volta
                 # invece di fallire a ogni selezione.

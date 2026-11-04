@@ -510,7 +510,15 @@ class MediaGrid(QListView, _JobSelection):
         self._requested.discard(camera_path)
 
     def request_visible_thumbnails(self) -> None:
-        """Chiede le miniature solo per ciò che si vede, una volta sola."""
+        """Chiede le miniature solo per ciò che si vede, una volta sola.
+
+        Se nessuno è collegato a thumbnail_needed non fa nulla, e soprattutto
+        non segna nulla come richiesto. Segnare un path mentre il worker non
+        esiste ancora significava non chiederlo mai più: è il difetto che ha
+        lasciato la griglia senza miniature dopo il ridisegno.
+        """
+        if self.receivers(self.thumbnail_needed) == 0:
+            return
         rect = self.viewport().rect()
         for row in range(self._model.rowCount()):
             index = self._model.index(row, COL_NAME)

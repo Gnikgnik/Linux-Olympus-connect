@@ -417,3 +417,110 @@ def test_progress_bar_handles_zero_total(windows, qapp, settings):
     win = windows(settings)
     win._update_total_bar(0, 0)
     assert win._total_bar.maximum() >= 1
+
+
+# --- percorso reale di miniature e anteprima --------------------------------
+#
+# Regressione: gli screenshot iniettavano le miniature direttamente nel
+# modello, quindi il percorso di richiesta attraverso i worker non era mai
+# esercitato. Si è rotto senza che nessuna prova se ne accorgesse. Questi
+# test passano dai worker veri, sui loro thread, come fa l'applicazione.
+
+def _attendi(qapp, condizione, secondi=3.0):
+    import time
+    fine = time.monotonic() + secondi
+    while time.monotonic() < fine:
+        qapp.processEvents()
+        if condizione():
+            return True
+        time.sleep(0.01)
+    return condizione()
+
+
+class _RecordingClient:
+    """Ogni worker crea il proprio client: le chiamate vanno registrate a
+    livello di classe per vederle tutte."""
+
+    chiamate: list = []
+
+    def __init__(self):
+        self.commands = set()
+
+    def connect(self):
+        self.commands = {"get_imglist", "get_thumbnail", "get_screennail"}
+        return "E-M10MarkIV"
+
+    def keep_awake(self, seconds=3600):
+        return False
+
+    def ensure_play_mode(self):
+        pass
+
+    def list_media(self, directory="/DCIM"):
+        return []
+
+    def thumbnail(self, camera_path):
+        _RecordingClient.chiamate.append(("thumbnail", camera_path))
+        return _jpeg_valido()
+
+    def has_screennail(self):
+        return "get_screennail" in self.commands
+
+    def screennail(self, camera_path):
+        _RecordingClient.chiamate.append(("screennail", camera_path))
+        return _jpeg_valido()
+
+
+def _jpeg_valido() -> bytes:
+    from PyQt6.QtCore import QBuffer, QByteArray
+    from PyQt6.QtGui import QPixmap
+    pixmap = QPixmap(40, 30)
+    pixmap.fill()
+    dati = QByteArray()
+    buffer = QBuffer(dati)
+    buffer.open(QBuffer.OpenModeFlag.WriteOnly)
+    pixmap.save(buffer, "JPEG")
+    return bytes(dati)
+
+
+def test_thumbnails_are_actually_fetched_after_listing(windows, qapp, settings,
+                                                       tmp_path):
+    """La griglia chiedeva le miniature prima che il worker esistesse: le
+    richieste partivano nel vuoto, venivano segnate come fatte, e non si
+    ripetevano mai. Risultato: nessuna miniatura, nessun errore."""
+    _RecordingClient.chiamate = []
+    win = windows(settings, client_factory=_RecordingClient)
+    win.resize(1200, 700)
+    win.show()
+    jobs = [job(f"P{i}.ORF", JobState.NEW, tmp_path, kind=MediaKind.RAW)
+            for i in range(8)]
+    win.on_listed(jobs)
+
+    assert _attendi(qapp, lambda: len(win._model._thumbnails) > 0), \
+        "nessuna miniatura è arrivata nel modello"
+    richieste = [c for c in _RecordingClient.chiamate if c[0] == "thumbnail"]
+    assert richieste, "il client non ha mai ricevuto una richiesta di miniatura"
+
+
+def test_preview_is_actually_fetched_on_selection(windows, qapp, settings,
+                                                  tmp_path):
+    """Il worker dell'anteprima aveva un client proprio che non aveva mai
+    chiamato connect(): capacità vuote, quindi «questa fotocamera non genera
+    anteprime grandi» anche su una fotocamera che le genera."""
+    from PyQt6.QtCore import QItemSelectionModel
+
+    _RecordingClient.chiamate = []
+    win = windows(settings, client_factory=_RecordingClient)
+    win.resize(1200, 700)
+    win.show()
+    win.on_listed([job("A.ORF", JobState.NEW, tmp_path, kind=MediaKind.RAW)])
+    qapp.processEvents()
+
+    win._grid.selectionModel().select(
+        win._model.index(0, 0),
+        QItemSelectionModel.SelectionFlag.Select |
+        QItemSelectionModel.SelectionFlag.Rows)
+
+    assert _attendi(qapp, win._preview.has_image), \
+        f"anteprima assente; testo mostrato: {win._preview.text()!r}"
+    assert ("screennail", "/DCIM/100OLYMP/A.ORF") in _RecordingClient.chiamate
