@@ -1,17 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
   <title>Olympus Connect</title>
-  <!-- Variante per 16-32 px. A quelle dimensioni la versione dettagliata
-       diventa una macchia: qui ci sono solo due onde invece di tre, colori
-       piatti invece di gradienti, forme piu' grandi rispetto alla tela e
-       nessun dettaglio sotto i 2 px. -->
-  <rect width="48" height="48" rx="10" fill="#25313f"/>
-
-  <g fill="none" stroke="#5fd3f3" stroke-width="3.5" stroke-linecap="round">
-    <path d="M 11 14.5 A 14 14 0 0 1 37 14.5"/>
-    <path d="M 18 18 A 7 7 0 0 1 30 18"/>
-  </g>
-
-  <rect x="6" y="21" width="36" height="21" rx="4" fill="#eef2f6"/>
-  <circle cx="24" cy="31.5" r="9" fill="#1d2a38"/>
-  <circle cx="24" cy="31.5" r="6" fill="#4a86c4"/>
+  <defs>
+    <linearGradient id="f" x1="0" y1="0" x2="0" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2050b8"/>
+      <stop offset="1" stop-color="#06163f"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="11" fill="url(#f)"/>
+  <rect x="4.5" y="17.5" width="39" height="22.5" rx="3.6" fill="#1a1c20"/>
+  <path d="M4.5 23.2 V20.6 Q4.5 17.5 7.6 17.5 H16.8 L19.5 11.3 Q20 10.4 21.2 10.4 H26.8
+           Q28 10.4 28.5 11.3 L31.2 17.5 H40.4 Q43.5 17.5 43.5 20.6 V23.2 Z" fill="#dde1e5"/>
+  <circle cx="24" cy="31.4" r="8.6" fill="#b3b9c0"/>
+  <circle cx="24" cy="31.4" r="7.2" fill="#202327"/>
+  <circle cx="24" cy="31.4" r="5.1" fill="#1d3070"/>
+  <circle cx="22" cy="29.4" r="1.6" fill="#ffffff" opacity="0.9"/>
 </svg>

@@ -123,10 +123,19 @@ comandi disponibili.
 - **Nome:** Olympus Connect. Repository GitHub `Linux-Olympus-connect`,
   account `Gnikgnik`.
 - **Licenza:** GPL-3.0-or-later, file `LICENSE` nel repository.
-- **Icona:** `olympus_connect/resources/`, in due varianti — dettagliata per
-  48 px e oltre, semplificata per 16–32 px, dove le tre onde Wi-Fi della
-  versione dettagliata si fondono in una macchia. Fotocamera chiara su fondo
-  scuro arrotondato, onde Wi-Fi ciano dal mirino.
+- **Icona:** `olympus_connect/resources/`. Una OM-D vista di fronte, su fondo
+  blu arrotondato: calotta argento con la gobba centrale del pentaprisma,
+  corpo nero, obiettivo con il trattamento antiriflesso. La gobba è il segno
+  di riconoscimento, e viene dalla OM-1 del 1972. Due varianti: dettagliata
+  per 48 px e oltre, semplificata per 16–32 px, dove ghiere, zigrinatura e
+  riflessi sparirebbero sotto il pixel e resta solo la sagoma.
+- **Marchio Olympus: evocato, mai usato.** Né l'icona né l'interfaccia
+  contengono il logo, la scritta OLYMPUS, la striscia dorata del marchio o il
+  logo OM SYSTEM. Sono marchi registrati, e usarli in un progetto pubblico
+  farebbe sembrare l'applicazione un prodotto ufficiale. Il riferimento
+  passa dal linguaggio del corpo OM e dal blu storico del catalogo, usato da
+  solo. Il nome «Olympus Connect» è un uso descrittivo (dice con quali
+  fotocamere funziona), non un'affiliazione.
 - **Voce:** messaggi d'errore che dicono all'utente *cosa fare*, non cosa è
   andato storto. Nessuna etichetta che promette ciò che il firmware non fa:
   il pulsante si chiama "Riprova", non "Riprendi", perché senza supporto

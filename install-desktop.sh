@@ -49,9 +49,10 @@ fi
 
 # -- icone ----------------------------------------------------------------
 #
-# Due varianti: sotto i 48 px quella dettagliata diventa illeggibile, perche'
-# le tre onde Wi-Fi si fondono in una macchia. La variante semplificata ha
-# due onde e colori piatti, quindi resta nitida fino a 16 px.
+# Due varianti: sotto i 48 px ghiere, zigrinatura e riflessi dell'obiettivo
+# della versione dettagliata sparirebbero sotto il pixel. La variante
+# semplificata tiene solo la sagoma (gobba, calotta, corpo, obiettivo), che
+# resta riconoscibile fino a 16 px.
 
 if command -v rsvg-convert >/dev/null; then
     for dim in 16 22 24 32; do

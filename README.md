@@ -79,7 +79,9 @@ Installa la voce nel menu (*Grafica → Fotografia*), l'icona nel tema `hicolor`
 
 Va rieseguito se sposti la cartella del progetto, perché il file `.desktop` contiene il percorso assoluto del venv.
 
-L'icona esiste in due varianti. Sotto i 48 px quella dettagliata diventa illeggibile — le tre onde Wi-Fi si fondono in una macchia — quindi per 16, 22, 24 e 32 px viene installata una variante semplificata con due onde e colori piatti, che resta nitida.
+L'icona è una OM-D vista di fronte: calotta argento con la gobba del pentaprisma, corpo nero, obiettivo, su fondo blu. Esiste in due varianti. Sotto i 48 px ghiere, zigrinatura e riflessi dell'obiettivo sparirebbero sotto il pixel, quindi per 16, 22, 24 e 32 px viene installata una variante semplificata che tiene solo la sagoma, che resta riconoscibile anche nel pannello.
+
+Il riferimento a Olympus sta nel disegno del corpo, non nel marchio: né il logo né la scritta OLYMPUS compaiono nell'applicazione, e questo progetto non è affiliato a OM Digital Solutions né a Olympus.
 
 ## Uso
 
