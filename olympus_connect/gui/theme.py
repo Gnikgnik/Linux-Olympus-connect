@@ -125,6 +125,7 @@ QMainWindow::separator {{ width: 0px; height: 0px; }}
 #dim  {{ color: {TEXT_DIM}; background: transparent; }}
 #faint {{ color: {TEXT_FAINT}; background: transparent; font-size: {SIZE_SMALL}px; }}
 #value {{ color: {TEXT}; background: transparent; font-size: {SIZE_SMALL}px; }}
+#shotHeadline {{ color: {TEXT}; background: transparent; font-size: {SIZE_STRONG}px; font-weight: 600; }}
 
 #separator {{ background: {LINE}; border: none; max-height: 1px; min-height: 1px; }}
 

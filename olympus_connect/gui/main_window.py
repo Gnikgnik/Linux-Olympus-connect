@@ -28,6 +28,7 @@ from . import icons, theme
 from .grid import MediaFilter, MediaGrid, MediaListModel, MediaTable
 from .panels import CollapsiblePanel, SectionLabel, Separator
 from .preview import PreviewView
+from .shot import ShotSection
 from .workers import (
     DownloadWorker, ListWorker, PreviewWorker, ThumbWorker, describe_error,
 )
@@ -403,6 +404,9 @@ class MainWindow(QMainWindow):
         # un pixel una foto limitata dalla larghezza: produce solo due
         # bande vuote dentro il bordo e un buco prima dei dettagli.
         corpo.addLayout(self._details)
+
+        self._shot = ShotSection()
+        corpo.addWidget(self._shot)
         corpo.addStretch(1)
         return pannello
 
@@ -595,6 +599,7 @@ class MainWindow(QMainWindow):
         worker.ready.connect(self.on_preview_ready)
         worker.failed.connect(self.on_preview_failed)
         worker.unavailable.connect(self.on_preview_unavailable)
+        worker.shot_ready.connect(self.on_shot_ready)
         self._preview_worker = worker
         self._start_on_thread(worker)
         self.preview_needed.connect(worker.request,
@@ -613,6 +618,8 @@ class MainWindow(QMainWindow):
         self._grid.forget_thumbnail(camera_path)
 
     def _suspend_thumbnails(self, suspended: bool) -> None:
+        if suspended:
+            self._shot.clear()
         for worker in (self._thumb_worker, self._preview_worker):
             if worker is not None:
                 worker.set_suspended(suspended)
@@ -630,10 +637,14 @@ class MainWindow(QMainWindow):
 
     def on_selection_changed(self, *_args) -> None:
         self._update_selection_label()
+        # I dati di scatto mostrati sono quelli del file precedente: via
+        # subito, ricompaiono quando arrivano quelli nuovi.
+        self._shot.clear()
         jobs = self.selected_jobs()
         if not jobs:
             self._preview.show_message("Nessun file selezionato")
             self._clear_details()
+            self._preview_path = None
             return
         self._show_details(jobs[-1])
         if len(jobs) == 1 and self._preview_worker is not None:
@@ -691,6 +702,12 @@ class MainWindow(QMainWindow):
     def on_preview_unavailable(self, camera_path: str) -> None:
         self._preview.show_message(
             "Questa fotocamera non genera anteprime grandi")
+
+    @pyqtSlot(str, object)
+    def on_shot_ready(self, camera_path: str, info: object) -> None:
+        if camera_path != self._preview_path or len(self.selected_jobs()) != 1:
+            return      # la selezione è cambiata mentre arrivava
+        self._shot.show_shot(info)
 
     # ------------------------------------------------------------------
     # vista e filtri

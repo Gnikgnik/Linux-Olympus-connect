@@ -524,3 +524,101 @@ def test_preview_is_actually_fetched_on_selection(windows, qapp, settings,
     assert _attendi(qapp, win._preview.has_image), \
         f"anteprima assente; testo mostrato: {win._preview.text()!r}"
     assert ("screennail", "/DCIM/100OLYMP/A.ORF") in _RecordingClient.chiamate
+
+
+# --- dati di scatto ---------------------------------------------------------------
+
+from fractions import Fraction  # noqa: E402
+
+from olympus_connect.core.exif import ShotInfo  # noqa: E402
+
+_INFO = ShotInfo(exposure_time=Fraction(1, 60), f_number=Fraction(7, 2),
+                 iso=6400, focal_length=Fraction(14),
+                 lens="LUMIX G VARIO 14-42/F3.5-5.6 II", exposure_program=4)
+
+
+def _seleziona(win, righe):
+    from PyQt6.QtCore import QItemSelectionModel
+    modello = win._grid.selectionModel()
+    modello.clearSelection()
+    for riga in righe:
+        modello.select(win._model.index(riga, 0),
+                       QItemSelectionModel.SelectionFlag.Select |
+                       QItemSelectionModel.SelectionFlag.Rows)
+
+
+def _finestra_con(windows, settings, tmp_path, *nomi):
+    win = windows(settings)
+    win.resize(1200, 700)
+    win.show()
+    kinds = {".ORF": MediaKind.RAW, ".MOV": MediaKind.MOVIE, ".JPG": MediaKind.JPEG}
+    win.on_listed([job(n, JobState.NEW, tmp_path, kind=kinds[n[-4:]]) for n in nomi])
+    return win
+
+
+def test_shot_section_is_hidden_until_data_arrives(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    assert win._shot.isHidden()
+
+
+def test_shot_section_shows_headline_and_rows(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    assert not win._shot.isHidden()
+    assert win._shot.headline_text() == "1/60 s   f/3,5   ISO 6400   14 mm"
+    assert win._shot.rows() == [
+        ("Obiettivo", "LUMIX G VARIO 14-42/F3.5-5.6 II"),
+        ("Modalità", "Priorità dei tempi"),
+    ]
+
+
+def test_shot_data_for_a_file_no_longer_selected_is_ignored(
+        windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF", "B.ORF")
+    _seleziona(win, [0])
+    _seleziona(win, [1])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    assert win._shot.isHidden()
+
+
+def test_missing_shot_data_shows_the_unavailable_line(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", None)
+    assert not win._shot.isHidden()
+    assert win._shot.is_unavailable()
+    assert win._shot.rows() == []
+
+
+def test_changing_selection_hides_the_previous_shot(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF", "B.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    _seleziona(win, [1])
+    assert win._shot.isHidden()
+
+
+def test_multiple_selection_hides_the_shot(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF", "B.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    _seleziona(win, [0, 1])
+    assert win._shot.isHidden()
+
+
+def test_starting_a_download_hides_the_shot(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    win._suspend_thumbnails(True)
+    assert win._shot.isHidden()
+
+
+def test_a_shot_with_only_rows_hides_the_empty_headline(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", ShotInfo(white_balance=0))
+    assert win._shot.headline_text() == ""
+    assert win._shot.rows() == [("Bilanciamento", "Auto")]
