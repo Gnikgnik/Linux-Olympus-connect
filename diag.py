@@ -6,10 +6,11 @@ al suo access point:
 
     python3 diag.py
 
-Risponde a tre domande:
+Risponde a quattro domande:
   - la fotocamera risponde solo con lo User-Agent di OI.Share?
   - RAW (.ORF) e video (.MOV) sono scaricabili via GET?
   - il server supporta le richieste Range (ripresa dei trasferimenti)?
+  - get_exif restituisce i dati di scatto, e in che forma? L'anteprima li contiene?
 
 Registra inoltre l'output grezzo della fotocamera in tests/fixtures/,
 che diventa la base dei test automatici.
@@ -290,6 +291,79 @@ def probe_previews(files: list[list[str]]) -> None:
                 step(f"{endpoint} {ext}", False, type(exc).__name__)
 
 
+def _exif_shape(body: bytes) -> str:
+    """In che forma get_exif restituisce i dati: decide come leggerli."""
+    if body[:4] in (b"II*\x00", b"MM\x00*"):
+        return "TIFF nudo"
+    if body[:6] == b"Exif\x00\x00":
+        return "blocco Exif"
+    if body[:2] == b"\xff\xd8":
+        return "JPEG"
+    return "sconosciuta"
+
+
+def probe_exif(files: list[list[str]]) -> None:
+    """Da dove si leggono i dati di scatto?
+
+    Due fonti possibili (specifica 2026-11-06-dati-di-scatto-design.md):
+    A, get_exif.cgi, una richiesta dedicata; B, l'EXIF che la fotocamera
+    potrebbe copiare dentro il JPEG dell'anteprima. Questo passaggio
+    registra entrambe, così la scelta si fa sui byte veri.
+    """
+    import time
+
+    print("\n== Dati di scatto ==")
+
+    first: dict[str, str] = {}
+    for parts in files:
+        first.setdefault(Path(parts[1]).suffix.upper(), f"{parts[0]}/{parts[1]}")
+
+    out = FIXTURES / "exif"
+    out.mkdir(parents=True, exist_ok=True)
+    sorgenti: list[str] = []
+
+    for ext in (".JPG", ".ORF", ".MOV"):
+        camera_path = first.get(ext)
+        if not camera_path:
+            print(f"  [SALTATO] get_exif {ext}: nessun file")
+            continue
+        try:
+            inizio = time.monotonic()
+            r = requests.get(f"{BASE}/get_exif.cgi", headers=UA,
+                             params={"DIR": camera_path}, timeout=TIMEOUT)
+            ms = (time.monotonic() - inizio) * 1000
+            body = r.content
+            forma = _exif_shape(body)
+            step(f"get_exif {ext}", r.status_code == 200 and forma != "sconosciuta",
+                 f"HTTP {r.status_code}, {r.headers.get('Content-Type', '?')}, "
+                 f"{len(body)} byte, {ms:.0f} ms, forma: {forma}, "
+                 f"inizio: {body[:16].hex(' ')}")
+            nome = f"{ext[1:].lower()}.bin"
+            (out / nome).write_bytes(body)
+            sorgenti.append(f"{nome} {camera_path}")
+        except requests.RequestException as exc:
+            step(f"get_exif {ext}", False, type(exc).__name__)
+
+    camera_path = first.get(".ORF")
+    if camera_path:
+        try:
+            r = requests.get(f"{BASE}/get_screennail.cgi", headers=UA,
+                             params={"DIR": camera_path}, timeout=TIMEOUT)
+            body = r.content
+            posizione = body.find(b"Exif\x00\x00", 0, 65536)
+            step("EXIF dentro l'anteprima di un ORF",
+                 r.status_code == 200 and posizione >= 0,
+                 f"HTTP {r.status_code}, {len(body)} byte, "
+                 + (f"blocco Exif alla posizione {posizione}" if posizione >= 0
+                    else "nessun blocco Exif"))
+            (out / "screennail_orf.jpg").write_bytes(body)
+            sorgenti.append(f"screennail_orf.jpg {camera_path}")
+        except requests.RequestException as exc:
+            step("EXIF dentro l'anteprima di un ORF", False, type(exc).__name__)
+
+    (out / "sorgenti.txt").write_text("\n".join(sorgenti) + "\n")
+
+
 def probe_keepalive() -> None:
     """set_timeout permette di evitare che la fotocamera si addormenti?
 
@@ -362,8 +436,10 @@ def run() -> int:
     print(f"\n  {len(files)} file trovati sulla scheda")
     probe_downloads(files)
     probe_previews(files)
+    probe_exif(files)
     probe_keepalive()
-    print("\nFatto. Fixture in tests/fixtures/, campioni in diag-downloads/.")
+    print("\nFatto. Fixture in tests/fixtures/ (dati di scatto in "
+          "tests/fixtures/exif/), campioni in diag-downloads/.")
     return 0
 
 
