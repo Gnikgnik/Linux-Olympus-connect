@@ -443,3 +443,127 @@ def test_preview_worker_survives_a_client_without_the_capability_check(qapp):
     worker.failed.connect(lambda p, m: errori.append(m))
     worker.request("/DCIM/100OLYMP/A.ORF")      # non deve sollevare
     assert errori and errori[0]
+
+
+# --- dati di scatto ------------------------------------------------------------
+
+from fractions import Fraction  # noqa: E402
+
+from olympus_connect.core.exif import ShotInfo  # noqa: E402
+
+# Un EXIF minimo e valido: ISO 200, little-endian, solo IFD0 -> IFD EXIF.
+_EXIF_ISO_200 = (
+    b"II*\x00\x08\x00\x00\x00"
+    b"\x01\x00" b"\x69\x87\x04\x00\x01\x00\x00\x00\x1a\x00\x00\x00" b"\x00\x00\x00\x00"
+    b"\x01\x00" b"\x27\x88\x03\x00\x01\x00\x00\x00\xc8\x00\x00\x00" b"\x00\x00\x00\x00"
+)
+
+
+class _ClientConDati(FakeClient):
+    def __init__(self, exif=_EXIF_ISO_200, exif_fail=None, screennail_fail=None,
+                 has_exif=True):
+        super().__init__()
+        self.commands = {"get_exif", "get_screennail"}
+        self.ordine: list[str] = []
+        self._exif = exif
+        self._exif_fail = exif_fail
+        self._screennail_fail = screennail_fail
+        self._has_exif = has_exif
+
+    def has_exif(self):
+        return self._has_exif
+
+    def exif(self, camera_path):
+        self.ordine.append("exif")
+        if self._exif_fail:
+            raise self._exif_fail
+        return self._exif
+
+    def has_screennail(self):
+        return True
+
+    def screennail(self, camera_path):
+        self.ordine.append("screennail")
+        if self._screennail_fail:
+            raise self._screennail_fail
+        return b"\xff\xd8grande"
+
+
+def _registra(worker):
+    dati, anteprime, errori = [], [], []
+    worker.shot_ready.connect(lambda p, i: dati.append((p, i)))
+    worker.ready.connect(lambda p, d: anteprime.append(p))
+    worker.failed.connect(lambda p, m: errori.append(p))
+    return dati, anteprime, errori
+
+
+def test_preview_worker_reads_shot_data_before_the_preview(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+    client = _ClientConDati()
+    worker = PreviewWorker(client)
+    dati, anteprime, _ = _registra(worker)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert client.ordine == ["exif", "screennail"]
+    assert dati == [("/DCIM/100OLYMP/A.ORF", ShotInfo(iso=200))]
+    assert anteprime == ["/DCIM/100OLYMP/A.ORF"]
+
+
+def test_failed_shot_data_still_loads_the_preview(qapp):
+    from olympus_connect.core.errors import ProtocolError
+    from olympus_connect.gui.workers import PreviewWorker
+    worker = PreviewWorker(_ClientConDati(exif_fail=ProtocolError("x")))
+    dati, anteprime, errori = _registra(worker)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert dati == [("/DCIM/100OLYMP/A.ORF", None)]
+    assert anteprime == ["/DCIM/100OLYMP/A.ORF"]
+    assert errori == []
+
+
+def test_unreadable_shot_data_is_reported_as_none(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+    worker = PreviewWorker(_ClientConDati(exif=b"non exif"))
+    dati, _, _ = _registra(worker)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert dati == [("/DCIM/100OLYMP/A.ORF", None)]
+
+
+def test_failed_preview_still_delivers_shot_data(qapp):
+    from olympus_connect.core.errors import ProtocolError
+    from olympus_connect.gui.workers import PreviewWorker
+    worker = PreviewWorker(_ClientConDati(screennail_fail=ProtocolError("x")))
+    dati, _, errori = _registra(worker)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert dati == [("/DCIM/100OLYMP/A.ORF", ShotInfo(iso=200))]
+    assert errori == ["/DCIM/100OLYMP/A.ORF"]
+
+
+def test_no_shot_data_request_for_videos(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+    client = _ClientConDati()
+    worker = PreviewWorker(client)
+    dati, _, _ = _registra(worker)
+    worker.request("/DCIM/100OLYMP/A.MOV")
+    assert "exif" not in client.ordine
+    assert dati == []
+
+
+def test_no_shot_data_when_the_camera_lacks_get_exif(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+    client = _ClientConDati(has_exif=False)
+    worker = PreviewWorker(client)
+    dati, anteprime, _ = _registra(worker)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert client.ordine == ["screennail"]
+    assert dati == []
+    assert anteprime == ["/DCIM/100OLYMP/A.ORF"]
+
+
+def test_no_shot_data_while_suspended(qapp):
+    from olympus_connect.gui.workers import PreviewWorker
+    client = _ClientConDati()
+    worker = PreviewWorker(client)
+    dati, _, _ = _registra(worker)
+    worker.set_suspended(True)
+    worker.request("/DCIM/100OLYMP/A.ORF")
+    assert client.ordine == []
+    assert dati == []

@@ -9,6 +9,8 @@ from typing import Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
+from ..core.exif import parse_exif
+from ..core.model import MediaKind, classify
 from ..core.downloader import Job, Outcome, download, pending, plan
 from ..core.stats import TransferStats
 from ..core.errors import (
@@ -120,6 +122,7 @@ class PreviewWorker(QObject):
     ready = pyqtSignal(str, bytes)
     failed = pyqtSignal(str, str)
     unavailable = pyqtSignal(str)
+    shot_ready = pyqtSignal(str, object)     # percorso, ShotInfo | None
 
     def __init__(self, client) -> None:
         super().__init__()
@@ -134,18 +137,38 @@ class PreviewWorker(QObject):
     def request(self, camera_path: str) -> None:
         if self._suspended:
             return
-        # Tutto dentro il try, compreso l'interrogazione delle capacita':
-        # questo slot e' invocato da Qt attraverso una connessione in coda,
-        # e un'eccezione che sfugge da qui non risale a un chiamante Python
-        # ma fa abortire il processo.
+        # Ogni passo ha il suo try: questo slot e' invocato da Qt attraverso
+        # una connessione in coda, e un'eccezione che sfugge da qui non
+        # risale a un chiamante Python ma fa abortire il processo.
         try:
-            # Questo worker ha un client proprio, perché requests.Session non
-            # è thread-safe. Un client nuovo non ha mai interrogato la
-            # fotocamera e non ne conosce le capacità: senza questo passo
+            # Questo worker ha un client proprio, perche' requests.Session non
+            # e' thread-safe. Un client nuovo non ha mai interrogato la
+            # fotocamera e non ne conosce le capacita': senza questo passo
             # has_screennail risponde no anche quando la fotocamera le
             # anteprime le genera. Una volta sola, sul thread del worker.
             if not getattr(self._client, "commands", None):
                 self._client.connect()
+        except Exception as exc:
+            self.failed.emit(camera_path, describe_error(exc))
+            return
+        # I dati di scatto prima: pochi KB, arrivano mentre l'anteprima da
+        # 1 MB e' ancora in viaggio.
+        self._request_shot(camera_path)
+        self._request_screennail(camera_path)
+
+    def _request_shot(self, camera_path: str) -> None:
+        if classify(camera_path) is MediaKind.MOVIE:
+            return
+        try:
+            if not self._client.has_exif():
+                return
+            info = parse_exif(self._client.exif(camera_path))
+        except Exception:
+            info = None     # "non disponibili"; l'anteprima va chiesta comunque
+        self.shot_ready.emit(camera_path, info)
+
+    def _request_screennail(self, camera_path: str) -> None:
+        try:
             if not self._client.has_screennail():
                 # Altri modelli potrebbero non averlo: si dichiara una volta
                 # invece di fallire a ogni selezione.
