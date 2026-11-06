@@ -204,3 +204,47 @@ Prova eseguita con `diag.py`, sezione «Dati di scatto»:
 ```
 
 Fonte scelta: **A**, `get_exif.cgi`. Per un ORF risponde `200`, `application/octet-stream`, 66 560 byte in 57 ms, e comincia con l'intestazione `IIRO`. Il `FAIL` dell'etichetta ORF è solo del rilevatore di forma della sonda, che allora non conosceva l'intestazione ORF `IIRO`; da allora è stato corretto in `diag.py`. Per JPG e MOV la prova è stata saltata perché non c'erano file di quel tipo sulla scheda. L'anteprima di un ORF non contiene un blocco Exif, quindi la fonte B non è utilizzabile per i RAW.
+
+## Aggiornamento 2026-11-06: modalità scatto
+
+Prima esecuzione (21:53), senza regola del firewall: `startliveview` risponde 200 ma non arriva nessun pacchetto a entrambe le qualità; i comandi di messa a fuoco e scatto rispondono HTTP 520, errorcode 1004, perché la prova li mandava con il live fermo (corretto poi); il video parte e si ferma. Seconda esecuzione (21:59), con la regola temporanea `ufw allow in from 192.168.0.10 proto udp to any port 40000`: tutto passa. Referto della seconda:
+
+```
+== Telecomando (modalità scatto) ==
+  Scatta una foto e gira un video di 3 secondi.
+  [OK  ] switch_cammode rec 0640x0480 — HTTP 200, 49 ms: (vuoto)
+  [OK  ] get_camprop takemode — HTTP 200, 24 ms: <?xml version="1.0"?><get><value>S</value></get>
+  [OK  ] get_camprop desclist — HTTP 200, 360 ms: <?xml version="1.0"?><desclist><desc><propname>shutspeedvalue</propname><attribute>getset</attribute><value>640</value><enum>60" 50" 40" 30" 25" 20" 15" 13" 10"
+  [OK  ] startliveview 0640x0480 — HTTP 200, 319 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funcid name="maxta
+  [OK  ] stopliveview 0640x0480 — HTTP 200, 308 ms: (vuoto)
+  [OK  ] live 0640x0480 — 3250 pacchetti (650/s), circa 31.0 fotogrammi/s, dimensioni 14–1472 byte, origine 192.168.0.10:16540
+    inizi JPEG 155, marcatori RTP 153, fini JPEG 153, salti di sequenza 1, RTP non leggibili 0
+    RTP: versione 2, payload type 96, CSRC 0, padding 0
+    pacchetti con estensione: 155
+    prima estensione: profilo 0x0001, 228 byte, intestazione 90 60 26 f6 00 14 df c0 00 00 00 00 00 01 00 39 00 01 00 01 00 00 72 c1 00 04 00 01 00 00 00 01 00 05 00 01 00 00 07 8c 00 03 00 01 00 00 00 02
+  [OK  ] switch_cammode rec 1024x0768 — HTTP 200, 25 ms: (vuoto)
+  [OK  ] startliveview 1024x0768 — HTTP 200, 291 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funcid name="maxta
+  [OK  ] stopliveview 1024x0768 — HTTP 200, 262 ms: (vuoto)
+  [OK  ] live 1024x0768 — 3225 pacchetti (645/s), circa 31.0 fotogrammi/s, dimensioni 16–1472 byte, origine 192.168.0.10:16540
+    inizi JPEG 155, marcatori RTP 154, fini JPEG 154, salti di sequenza 1, RTP non leggibili 0
+    RTP: versione 2, payload type 96, CSRC 0, padding 0
+    pacchetti con estensione: 155
+    prima estensione: profilo 0x0001, 228 byte, intestazione 90 60 33 e7 00 1c 0f 98 00 00 00 00 00 01 00 39 00 01 00 01 00 00 71 64 00 04 00 01 00 00 00 01 00 05 00 01 00 00 07 8c 00 03 00 01 00 00 00 02
+  [OK  ] switch_cammode rec 0640x0480 (scatto) — HTTP 200, 22 ms: (vuoto)
+  [OK  ] startliveview (scatto) — HTTP 200, 325 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funcid name="maxta
+  [OK  ] assignafframe 0320x0240 — HTTP 200, 174 ms: <?xml version="1.0"?><response><affocus>ok</affocus><afframepoint>0284x0204</afframepoint><afframesize>0072x0072</afframesize></response>
+  [OK  ] releaseafframe — HTTP 200, 22 ms: (vuoto)
+  [OK  ] starttake — HTTP 200, 502 ms: <?xml version="1.0"?><response><take>ok</take><affocus>ok</affocus><afframepoint>0296x0224</afframepoint><afframesize>0046x0032</afframesize></response>
+  [OK  ] stoptake — HTTP 200, 19 ms: (vuoto)
+  [OK  ] getrecview (live acceso) — HTTP 200, 44 ms: JPEG 50587 byte
+  [OK  ] getlastjpg (live acceso) — HTTP 200, 1184 ms: JPEG 1759136 byte
+  [OK  ] stopliveview (scatto) — HTTP 200, 320 ms: (vuoto)
+  [OK  ] startliveview (video) — HTTP 200, 329 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funcid name="maxta
+  [OK  ] startmovietake liveview=on — HTTP 200, 536 ms: (vuoto)
+  [OK  ] stopmovietake — HTTP 200, 1606 ms: (vuoto)
+  [OK  ] live durante la registrazione — 2166 pacchetti in 5.1 s di registrazione
+  ripristinata modalità play
+  [OK  ] nuovi file sulla scheda — HTTP 200, 11 file, ultimi: PB061196.MOV, P9061187.ORF
+
+Fatto. Risposte e pacchetti in diag-downloads/telecomando/.
+```

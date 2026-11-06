@@ -59,7 +59,14 @@ In un blocco `finally`: `stopliveview` e ritorno in riproduzione, qualunque cosa
 
 **Riservatezza.** Fotogrammi del live e immagine di revisione mostrano ciò che la fotocamera inquadra. I pacchetti grezzi e le immagini restano in `diag-downloads/` (ignorata da git). Nelle fixture entra solo la **struttura**: per ogni pacchetto le intestazioni RTP vere e la lunghezza; il payload JPEG viene sostituito da un JPEG sintetico spezzato allo stesso modo. Le risposte di `get_camprop` possono contenere seriali e vanno controllate come le fixture EXIF prima del commit.
 
-**Cancello.** Se il live non arriva nemmeno con la regola temporanea, o se lo scatto non parte, il lavoro si ferma qui, prima di scrivere l'interfaccia. L'esito viene annotato in questa specifica e nel resoconto sul campo, insieme alle decisioni che ne derivano: qualità predefinita del live (la più alta che mantiene almeno 15 fotogrammi al secondo), formato dell'estensione RTP, fine del fotogramma (marcatore o fine JPEG), esito della messa a fuoco, se serve una regola del firewall.
+**Esito della prova sul campo (2026-11-06):** passa.
+- Live: 650 pacchetti/s e circa 31,0 fotogrammi/s a 640×480, 645/31,0 a 1024×768; pacchetti da 14 a 1472 byte; origine 192.168.0.10, porta 16540; firewall: regola necessaria (senza regola `startliveview` risponde 200 ma non arriva nessun pacchetto). La fotocamera risponde sempre dalla porta 16540: la parte 2 verifica se inviare un pacchetto UDP dalla porta locale 40000 a 192.168.0.10:16540 prima di `startliveview` fa passare le risposte senza regola.
+- Formato: RTP versione 2, payload type 96, CSRC 0, padding 0; inizio fotogramma riconosciuto dal pacchetto con l'estensione RTP (il suo payload inizia con FF D8); fine fotogramma dal marcatore RTP (il payload finisce con FF D9); estensione: profilo 0x0001, 228 byte (155 pacchetti con estensione per qualità, cioè gli inizi di fotogramma). Un salto di sequenza per registrazione.
+- Qualità predefinita del live: 1024x0768 (la più alta provata con almeno 15 fotogrammi/s; 1280x0960 non misurata).
+- Messa a fuoco: assignafframe point=0320x0240 risponde HTTP 200 in 174 ms con `affocus ok`, `afframepoint 0284x0204`, `afframesize 0072x0072`; esito comunicato così (il punto restituito è l'angolo in alto a sinistra del riquadro, centro 320,240 meno metà di 72, in coordinate del live). I comandi `exec_takemotion` richiedono il live acceso: con il live fermo rispondono HTTP 520, errorcode 1004.
+- Scatto: starttake HTTP 200 in 502 ms (`take ok`, `affocus ok`, afframepoint 0296x0224, afframesize 0046x0032), stoptake 200; getrecview con il live acceso: JPEG 1024×768, 50 587 byte, 44 ms; getlastjpg con il live acceso: JPEG 5184×3888, 1 759 136 byte, 1184 ms.
+- Video: startmovietake con liveview=on HTTP 200 in 536 ms, stopmovietake 200 in 1606 ms; live durante la registrazione: sì (2166 pacchetti in 5,1 s).
+- Modalità della ghiera: get_camprop takemode risponde `<get><value>S</value></get>`.
 
 ## Architettura
 
