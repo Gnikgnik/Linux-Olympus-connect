@@ -622,3 +622,37 @@ def test_a_shot_with_only_rows_hides_the_empty_headline(windows, qapp, settings,
     win.on_shot_ready("/DCIM/100OLYMP/A.ORF", ShotInfo(white_balance=0))
     assert win._shot.headline_text() == ""
     assert win._shot.rows() == [("Bilanciamento", "Auto")]
+
+
+def test_a_model_reset_clears_shot_and_details(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    assert not win._shot.isHidden()
+    assert win._detail_values["Nome"].text() == "A.ORF"
+    win.on_listed([job("A.ORF", JobState.NEW, tmp_path, kind=MediaKind.RAW)])
+    assert win._shot.isHidden()
+    assert win._detail_values["Nome"].text() == "—"
+
+
+def test_a_shot_arriving_while_suspended_is_ignored(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win._suspend_thumbnails(True)
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    assert win._shot.isHidden()
+
+
+def test_shot_and_details_values_start_at_the_same_x(windows, qapp, settings, tmp_path):
+    win = _finestra_con(windows, settings, tmp_path, "A.ORF")
+    _seleziona(win, [0])
+    win.on_shot_ready("/DCIM/100OLYMP/A.ORF", _INFO)
+    # Niente processEvents qui: il vero worker risponderebbe «non disponibili»
+    # e svuoterebbe le righe. La geometria si calcola a mano.
+    win._inspector.layout().activate()
+    win._shot.layout().activate()
+    dettaglio = win._detail_values["Nome"]
+    riga = win._shot._grid.itemAtPosition(0, 1).widget()
+    x_dettaglio = dettaglio.mapTo(win, dettaglio.rect().topLeft()).x()
+    x_scatto = riga.mapTo(win, riga.rect().topLeft()).x()
+    assert x_dettaglio == x_scatto

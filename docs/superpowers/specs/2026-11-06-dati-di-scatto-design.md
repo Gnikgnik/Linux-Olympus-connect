@@ -67,7 +67,7 @@ Dalla lista dei comandi della fotocamera: `get_exif.cgi` esiste e prende un solo
   - `rows`: lista ordinata di coppie (etichetta, valore) per Obiettivo, Modalità, Compensazione, Bilanciamento, Flash, Risoluzione, **solo per i campi presenti**.
 
   Regole di formattazione:
-  - tempo: sotto il secondo `1/N s` (con N arrotondato all'intero), da un secondo in su `2,5 s` con la virgola decimale;
+  - tempo (convenzione di exiftool): fino a 1/4 di secondo `1/N s`, con N = 1/tempo arrotondato per eccesso a metà (non all'intero pari); sopra 1/4 di secondo la forma decimale con la virgola, `0,3 s`, `0,5 s`, `0,8 s`, `1 s`, `2,5 s`, `30 s`;
   - diaframma: `f/3,5`, `f/8`, una cifra decimale al massimo, virgola italiana;
   - focale: `14 mm`, decimali solo se non nulli; 0 equivale ad assente;
   - compensazione: `0 EV`, `+0,3 EV`, `−0,7 EV` con il vero segno meno U+2212, una cifra decimale;

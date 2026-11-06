@@ -224,8 +224,13 @@ def _decimal(value: float) -> str:
 
 
 def format_exposure_time(value: Fraction) -> str:
-    if value < 1:
-        return f"1/{round(1 / value)} s"
+    """Come exiftool: «1/N s» fino a 1/4 s, poi decimale (0,3 s, 2,5 s).
+
+    Precondizione: value > 0. N è arrotondato per eccesso a metà (non
+    all'intero pari come round()).
+    """
+    if value <= Fraction(1, 4):
+        return f"1/{int(Fraction(1, 2) + 1 / value)} s"
     return f"{_decimal(float(value))} s"
 
 
@@ -239,7 +244,7 @@ def format_bias(value: Fraction) -> str:
 
 def format_shot(info: ShotInfo) -> FormattedShot:
     numbers: list[str] = []
-    if info.exposure_time is not None:
+    if info.exposure_time is not None and info.exposure_time > 0:
         numbers.append(format_exposure_time(info.exposure_time))
     if info.f_number is not None:
         numbers.append(f"f/{_decimal(float(info.f_number))}")

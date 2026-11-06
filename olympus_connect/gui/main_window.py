@@ -28,7 +28,7 @@ from . import icons, theme
 from .grid import MediaFilter, MediaGrid, MediaListModel, MediaTable
 from .panels import CollapsiblePanel, SectionLabel, Separator
 from .preview import PreviewView
-from .shot import ShotSection
+from .shot import ShotSection, label_column_width
 from .workers import (
     DownloadWorker, ListWorker, PreviewWorker, ThumbWorker, describe_error,
 )
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self._download_worker: DownloadWorker | None = None
         self._preview_path: str | None = None
         self._connected_model: str = ""
+        self._suspended = False
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
@@ -113,6 +114,9 @@ class MainWindow(QMainWindow):
         self.on_filter_changed()
         self._refresh_counts()
         self._update_selection_label()
+        # Un reset del modello (filtri, Aggiorna) azzera la selezione senza
+        # selectionChanged: pannelli e anteprima restavano su un file perso.
+        self._model.modelReset.connect(self.on_selection_changed)
 
     # -- rail -----------------------------------------------------------
 
@@ -390,6 +394,7 @@ class MainWindow(QMainWindow):
         self._details.setHorizontalSpacing(10)
         self._details.setVerticalSpacing(4)
         self._details.setColumnStretch(1, 1)
+        self._details.setColumnMinimumWidth(0, label_column_width())
         self._detail_values: dict[str, QLabel] = {}
         for riga, nome in enumerate(
                 ("Nome", "Scattato", "Tipo", "Dimensione", "Stato", "Destinazione")):
@@ -618,6 +623,7 @@ class MainWindow(QMainWindow):
         self._grid.forget_thumbnail(camera_path)
 
     def _suspend_thumbnails(self, suspended: bool) -> None:
+        self._suspended = suspended
         if suspended:
             self._shot.clear()
         for worker in (self._thumb_worker, self._preview_worker):
@@ -705,6 +711,8 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, object)
     def on_shot_ready(self, camera_path: str, info: object) -> None:
+        if self._suspended:
+            return      # download in corso: la sezione resta nascosta
         if camera_path != self._preview_path or len(self.selected_jobs()) != 1:
             return      # la selezione è cambiata mentre arrivava
         self._shot.show_shot(info)

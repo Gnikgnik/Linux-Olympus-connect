@@ -37,7 +37,7 @@ L'applicazione ufficiale vede **2 file su 1161**. Chi scatta in RAW non ha nessu
 | Download RAW `.ORF` | ✅ `caminfo` dichiara `GetRawImageSupport: available` |
 | Download video `.MOV` | ✅ provato fino a 129 MB; sulla scheda ci sono file da 944 MB |
 | Miniature per JPEG, RAW e video | ✅ `get_thumbnail.cgi` restituisce JPEG validi di 8–13 KB per tutti i tipi |
-| Dati di scatto prima di scaricare | ✅ tempo, diaframma, ISO, focale, obiettivo e altri, da `get_exif.cgi` |
+| Dati di scatto prima di scaricare | ✅ tempo, diaframma, ISO, focale, obiettivo e altri, da `get_exif.cgi` (verificato sui RAW; JPEG e video da verificare) |
 | Richieste `Range` (ripresa) | ❌ **non supportate**: risponde `200` senza `Content-Range` |
 | `set_timeout.cgi` (keep-alive) | ❌ dichiarato ma risponde `520` / `errorcode 1006` |
 | `get_unusedcapacity.cgi` | ❌ restituisce `0xFFFFFFFF`, sentinella di «non disponibile» |
@@ -147,7 +147,7 @@ Fuori scope anche live view, scatto remoto, sincronizzazione dell'orologio e log
 .venv/bin/python -m pytest
 ```
 
-301 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
+314 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
 
 Il test più importante è `test_download_recovers_from_drop_at_half_without_range`: un server locale chiude la connessione a metà del corpo **e** ignora il `Range`, cioè riproduce esattamente il comportamento di questa fotocamera. Verifica che il recupero produca un file corretto invece di un file corrotto.
 

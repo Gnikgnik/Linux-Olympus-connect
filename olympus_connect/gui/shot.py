@@ -8,7 +8,9 @@ uno schermo alto 768 px un trattino costa una riga.
 from __future__ import annotations
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
+    QApplication,
     QGraphicsOpacityEffect, QGridLayout, QLabel, QVBoxLayout, QWidget,
 )
 
@@ -17,6 +19,20 @@ from . import theme
 from .panels import SectionLabel
 
 UNAVAILABLE = "Dati di scatto non disponibili"
+
+# Le etichette di «Dettagli» e di «Scatto» stanno in due griglie separate:
+# senza una larghezza comune, la colonna dei valori parte a x diverse.
+LABEL_NAMES = ("Nome", "Scattato", "Tipo", "Dimensione", "Stato", "Destinazione",
+               "Obiettivo", "Modalità", "Compensazione", "Bilanciamento",
+               "Flash", "Risoluzione")
+
+
+def label_column_width() -> int:
+    """Larghezza della colonna etichette, con il carattere di #faint."""
+    font = QFont(QApplication.font())
+    font.setPixelSize(theme.SIZE_SMALL)
+    metrics = QFontMetrics(font)
+    return max(metrics.horizontalAdvance(n) for n in LABEL_NAMES) + 2
 
 
 def _label(text: str, role: str) -> QLabel:
@@ -44,6 +60,7 @@ class ShotSection(QWidget):
         self._grid.setHorizontalSpacing(10)
         self._grid.setVerticalSpacing(4)
         self._grid.setColumnStretch(1, 1)
+        self._grid.setColumnMinimumWidth(0, label_column_width())
         layout.addLayout(self._grid)
         self._rows: list[tuple[str, str]] = []
 

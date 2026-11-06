@@ -210,6 +210,10 @@ def test_real_camera_samples_match_exiv2(fixture_bytes):
                 assert letto == int(grezzo.split()[0]), (nome, campo)
             else:
                 assert letto == Fraction(grezzo), (nome, campo)
+        if ("Exif.Photo.PixelXDimension" not in valori
+                and "Exif.Image.ImageWidth" in valori):
+            assert info.width == int(valori["Exif.Image.ImageWidth"]), nome
+            assert info.height == int(valori["Exif.Image.ImageLength"]), nome
         if "Exif.Photo.Flash" in valori:
             assert info.flash_fired is bool(int(valori["Exif.Photo.Flash"]) & 1), nome
 
@@ -227,13 +231,27 @@ def _riga(info, etichetta):
     (Fraction(1, 4000), "1/4000 s"),
     (Fraction(1, 60), "1/60 s"),
     (Fraction(10, 600), "1/60 s"),
-    (Fraction(1, 3), "1/3 s"),
+    (Fraction(1, 3), "0,3 s"),
+    (Fraction(1, 4), "1/4 s"),
+    (Fraction(3, 10), "0,3 s"),
+    (Fraction(2, 5), "0,4 s"),
+    (Fraction(1, 2), "0,5 s"),
+    (Fraction(3, 5), "0,6 s"),
+    (Fraction(4, 5), "0,8 s"),
+    (Fraction(10, 13), "0,8 s"),
+    (Fraction(1, 8), "1/8 s"),
+    (Fraction(1, 3200), "1/3200 s"),
     (Fraction(1), "1 s"),
     (Fraction(5, 2), "2,5 s"),
     (Fraction(30), "30 s"),
 ])
 def test_exposure_time(tempo, testo):
     assert format_shot(ShotInfo(exposure_time=tempo)).headline == testo
+
+
+def test_a_zero_exposure_time_is_left_out_without_raising():
+    shot = format_shot(ShotInfo(exposure_time=Fraction(0), iso=100))
+    assert shot.headline == "ISO 100"
 
 
 @pytest.mark.parametrize("f,testo", [

@@ -172,7 +172,7 @@ def test_real_client_shows_shot_data_of_the_selected_raw(qapp, fake_camera, tmp_
             "la sezione Scatto non è comparsa"
         assert not finestra._shot.is_unavailable(), \
             "la sezione dice «non disponibili» sui byte veri della fotocamera"
-        assert "ISO" in finestra._shot.headline_text()
+        assert finestra._shot.headline_text() == "1/320 s   f/8   ISO 200   32 mm"
         assert "get_exif.cgi" in fake_camera.richieste
     finally:
         finestra.close()
