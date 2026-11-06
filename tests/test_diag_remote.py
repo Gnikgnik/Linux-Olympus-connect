@@ -5,7 +5,7 @@ dipende lo strumento che ricava le fixture dai pacchetti registrati.
 """
 import struct
 
-from diag import leggi_pacchetti, rtp_frame_size, rtp_summary, rtp_tlvs, salva_pacchetti
+from diag import leggi_pacchetti, rtp_frame_size, rtp_summary, statistiche_stabili, rtp_tlvs, salva_pacchetti
 
 
 def _rtp(marker=0, seq=7, ts=1000, ssrc=0x1234, ext=None, payload=b"\xff\xd8ab"):
@@ -110,3 +110,26 @@ def test_overflowing_extension_never_exposes_the_whole_packet():
     con_csrc[0] |= 0x02
     con_csrc[12:12] = b"\x00" * 8
     assert rtp_summary(bytes(con_csrc))["header_len"] == 12 + 8 + 4
+
+
+def test_steady_state_stats_exclude_the_backlog_and_count_gaps():
+    # 30 fps a 90 kHz: +3000 per fotogramma; 3 pacchetti per fotogramma.
+    pacchetti, seq = [], 0
+    for f in range(60):
+        for k in range(3):
+            pacchetti.append((0.5 + f / 30 + k * 0.001, ("x", 1),
+                              _rtp(seq=seq, ts=1000 + 3000 * f, marker=int(k == 2))))
+            seq += 1
+    # arretrato letto subito (t < 0.2) con timestamp e sequenza lontani
+    arretrato = [(0.002, ("x", 1), _rtp(seq=60000 + i, ts=5)) for i in range(5)]
+    del pacchetti[10]                        # un pacchetto perso nel regime
+    st = statistiche_stabili(arretrato + pacchetti, 0.2, 10.0)
+    assert st["pacchetti"] == len(pacchetti)
+    assert st["fotogrammi"] == 60
+    assert abs(st["fps"] - 30.0) < 0.01
+    assert st["salti"] == 1
+
+
+def test_steady_state_stats_on_nothing():
+    st = statistiche_stabili([], 0.0, 1.0)
+    assert st["pacchetti"] == 0 and st["fps"] is None and st["salti"] == 0

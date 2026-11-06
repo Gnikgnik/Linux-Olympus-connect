@@ -7,8 +7,9 @@ al suo access point:
     python3 diag.py
 
 Con l'opzione --telecomando prova invece la modalità scatto (visione dal
-vivo, messa a fuoco, scatto, video): scatta davvero una foto e gira un
-video di 3 secondi. Ghiera su P, A, S, M o iAuto.
+vivo a tre qualità, messa a fuoco, scatto, video e ripresa del live dopo
+il video): scatta davvero una foto e gira un video di 3 secondi.
+Ghiera su P, A, S, M o iAuto.
 
 Risponde a quattro domande:
   - la fotocamera risponde solo con lo User-Agent di OI.Share?
@@ -434,7 +435,8 @@ def probe_keepalive() -> None:
 # -- telecomando --------------------------------------------------------------
 
 LIVE_PORT = 40000           # fissa: una regola del firewall vale anche al secondo tentativo
-LIVE_SECONDS = 5.0
+LIVE_SECONDS = 3.0
+CAMERA_LIVE_PORT = 16540    # la porta da cui la fotocamera invia il live
 REMOTE_OUT = Path("diag-downloads/telecomando")
 
 
@@ -552,19 +554,68 @@ def _riporta(nome: str, risposta: tuple[int, bytes, float]) -> bool:
     return step(nome, stato == 200, f"HTTP {stato}, {ms:.0f} ms: {testo}")
 
 
-def _ricevi(sock: socket.socket, secondi: float) -> list[tuple[float, tuple[str, int], bytes]]:
-    pacchetti: list[tuple[float, tuple[str, int], bytes]] = []
-    sock.settimeout(0.25)
-    fine = time.monotonic() + secondi
-    while time.monotonic() < fine:
+class Ricevitore:
+    """Legge il socket in un thread di sfondo, già attivo prima di startliveview.
+
+    Il thread è daemon e finisce quando il socket si chiude (OSError), quando
+    si chiama stop() o quando passa la scadenza: nessuna chiamata HTTP
+    bloccante della prova lascia il socket senza lettore.
+    """
+
+    def __init__(self, sock: socket.socket, scadenza: float):
+        self.sock = sock
+        self.pacchetti: list[tuple[float, tuple[str, int], bytes]] = []
+        self._fine = threading.Event()
+        self._scadenza = time.monotonic() + scadenza
+        self._thread = threading.Thread(target=self._corpo, daemon=True)
+        self._thread.start()
+
+    def _corpo(self) -> None:
         try:
-            dati, origine = sock.recvfrom(65535)
-        except socket.timeout:
-            continue
+            self.sock.settimeout(0.25)
+            while not self._fine.is_set() and time.monotonic() < self._scadenza:
+                try:
+                    dati, origine = self.sock.recvfrom(65535)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                self.pacchetti.append((time.monotonic(), origine, dati))
         except OSError:
-            break
-        pacchetti.append((time.monotonic(), origine, dati))
-    return pacchetti
+            pass
+
+    def stop(self) -> list[tuple[float, tuple[str, int], bytes]]:
+        self._fine.set()
+        self._thread.join(timeout=2.0)
+        return list(self.pacchetti)
+
+
+def statistiche_stabili(pacchetti, t_da: float, t_a: float) -> dict:
+    """Fotogrammi al secondo e salti di sequenza nel solo regime stabile.
+
+    Considera i pacchetti ricevuti fra t_da e t_a (tempi monotonic); i
+    fotogrammi sono i timestamp RTP distinti, a 90 kHz. L'arretrato letto
+    subito dopo startliveview resta fuori.
+    """
+    sommari = [s for t, _o, p in pacchetti if t_da <= t <= t_a
+               for s in (rtp_summary(p),) if s]
+    stamp: list[int] = []
+    for s in sommari:
+        if s["timestamp"] not in stamp:
+            stamp.append(s["timestamp"])
+    fps = None
+    if len(stamp) >= 2:
+        durata = sum((b - a) % 2**32 for a, b in zip(stamp, stamp[1:])) / 90000
+        fps = (len(stamp) - 1) / durata if durata > 0 else None
+    salti = sum(1 for a, b in zip(sommari, sommari[1:])
+                if (b["seq"] - a["seq"]) % 65536 != 1)
+    return {"pacchetti": len(sommari), "fotogrammi": len(stamp), "fps": fps, "salti": salti}
+
+
+def _dimensioni(pacchetti, t_da: float, t_a: float) -> str:
+    viste = sorted({rtp_frame_size(p) for t, _o, p in pacchetti
+                    if t_da <= t <= t_a and rtp_frame_size(p)})
+    return ", ".join(f"{w}×{h}" for w, h in viste) or "nessuna"
 
 
 def _regole_firewall() -> None:
@@ -574,35 +625,74 @@ def _regole_firewall() -> None:
     print(f"      sudo ufw delete allow in from 192.168.0.10 proto udp to any port {LIVE_PORT}")
 
 
-def _analizza(nome: str, pacchetti, secondi: float) -> None:
+def _avvia_live(sock: socket.socket, nome: str) -> tuple[bool, float]:
+    """Pacchetto iniziale verso la fotocamera, poi startliveview.
+
+    Il pacchetto è il tentativo di aprire il percorso di ritorno nel
+    firewall senza regola. Restituisce (riuscito, istante del ritorno).
+    """
+    try:
+        sock.sendto(b"\x00", (CAMERA_IP, CAMERA_LIVE_PORT))
+    except OSError:
+        pass
+    ok = _riporta(f"startliveview {nome}",
+                  _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
+    return ok, time.monotonic()
+
+
+def _analizza(nome: str, pacchetti, t_ritorno: float, t_stop: float) -> None:
+    secondi = max(t_stop - t_ritorno, 0.001)
     if not pacchetti:
-        step(f"live {nome}", False, f"nessun pacchetto in {secondi:.0f} s")
-        _regole_firewall()
+        step(f"live {nome}", False, "nessun pacchetto")
         return
     sommari = [s for s in (rtp_summary(p) for _t, _o, p in pacchetti) if s]
     dimensioni = [len(p) for _t, _o, p in pacchetti]
     origini = sorted({f"{o[0]}:{o[1]}" for _t, o, _p in pacchetti})
-    inizi = sum(1 for s in sommari if s["payload_soi"])
-    marcatori = sum(1 for s in sommari if s["marker"])
-    fini = sum(1 for s in sommari if s["payload_eoi"])
-    salti = sum(1 for a, b in zip(sommari, sommari[1:])
-                if (b["seq"] - a["seq"]) % 65536 != 1)
+    arretrato = sum(1 for t, _o, _p in pacchetti if t < t_ritorno + 0.2)
+    st = statistiche_stabili(pacchetti, t_ritorno + 0.2, t_stop)
+    fps = f"{st['fps']:.2f}" if st["fps"] is not None else "n/d"
     step(f"live {nome}", True,
-         f"{len(pacchetti)} pacchetti ({len(pacchetti) / secondi:.0f}/s), "
-         f"circa {inizi / secondi:.1f} fotogrammi/s, dimensioni "
-         f"{min(dimensioni)}–{max(dimensioni)} byte, origine {', '.join(origini)}")
-    print(f"    inizi JPEG {inizi}, marcatori RTP {marcatori}, fini JPEG {fini}, "
-          f"salti di sequenza {salti}, RTP non leggibili {len(pacchetti) - len(sommari)}")
-    if sommari:
-        s = sommari[0]
-        print(f"    RTP: versione {s['version']}, payload type {s['payload_type']}, "
-              f"CSRC {s['csrc']}, padding {s['padding']}")
-    con_estensione = [(s, p) for s, (_t, _o, p) in zip(sommari, pacchetti) if s["extension"]]
-    print(f"    pacchetti con estensione: {len(con_estensione)}")
+         f"{len(pacchetti)} pacchetti, dimensioni {min(dimensioni)}–{max(dimensioni)} byte, "
+         f"origine {', '.join(origini)}")
+    print(f"    regime stabile (dopo 0,2 s dal ritorno di startliveview): "
+          f"{st['pacchetti']} pacchetti, {st['fotogrammi']} fotogrammi, "
+          f"{fps} fotogrammi/s, salti di sequenza {st['salti']}")
+    print(f"    pacchetti nei primi 0,2 s (arretrato): {arretrato}")
+    print(f"    dimensione dal flusso: {_dimensioni(pacchetti, 0, float('inf'))}")
+    print(f"    marcatori RTP {sum(1 for s in sommari if s['marker'])}, "
+          f"estensioni che sforano {sum(1 for s in sommari if s['ext_overflow'])}, "
+          f"RTP non leggibili {len(pacchetti) - len(sommari)}")
+    con_estensione = [(s, p) for s, (_t, _o, p) in zip(sommari, pacchetti)
+                      if s["extension"] and not s["ext_overflow"]]
     if con_estensione:
         s, p = con_estensione[0]
         print(f"    prima estensione: profilo 0x{s['ext_profile']:04x}, {s['ext_len']} byte, "
-              f"intestazione {p[:min(s['header_len'], 48)].hex(' ')}")
+              f"TLV {[i for i, _v in rtp_tlvs(p)]}")
+
+
+def _live_prova(sock: socket.socket, nome: str, qualita: str, secondi: float,
+                attivi: list, senza_regola: bool = False) -> bool:
+    """Un live di prova: ricevitore attivo, avvio, ascolto, stop, scarico."""
+    ricevitore = Ricevitore(sock, secondi + 15.0)
+    attivi.append(ricevitore)
+    _avvia_live(sock, nome)
+    t_ritorno = time.monotonic()
+    time.sleep(secondi)
+    t_stop = time.monotonic()
+    _riporta(f"stopliveview {nome}", _cgi("exec_takemisc.cgi", com="stopliveview"))
+    time.sleep(0.5)                      # scarica i pacchetti in coda dopo lo stop
+    pacchetti = ricevitore.stop()
+    attivi.remove(ricevitore)
+    etichetta = (f"{qualita} — live senza regola (pacchetto iniziale verso :{CAMERA_LIVE_PORT})"
+                 if senza_regola else qualita)
+    _analizza(etichetta, pacchetti, t_ritorno, t_stop)
+    salva_pacchetti(REMOTE_OUT / f"live_{qualita}.bin", pacchetti)
+    if senza_regola:
+        if pacchetti:
+            step("firewall", True, "nessuna regola del firewall necessaria")
+        else:
+            _regole_firewall()
+    return bool(pacchetti)
 
 
 def probe_remote() -> None:
@@ -612,17 +702,23 @@ def probe_remote() -> None:
     3 secondi. Pacchetti e immagini restano in diag-downloads/, perché
     mostrano ciò che la fotocamera inquadra.
     """
-    print("\n== Telecomando (modalità scatto) ==")
+    print("\n== Telecomando (modalità scatto, prova v2) ==")
     print("  Scatta una foto e gira un video di 3 secondi.")
     REMOTE_OUT.mkdir(parents=True, exist_ok=True)
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("", LIVE_PORT))
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+        effettivo = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
     except OSError as exc:
         step(f"porta UDP {LIVE_PORT}", False, f"{type(exc).__name__}: {exc}")
         return
+    step("buffer di ricezione", True,
+         f"richiesto 4194304 byte, effettivo {effettivo} byte "
+         "(il kernel lo limita a net.core.rmem_max e lo raddoppia)")
 
+    attivi: list[Ricevitore] = []
     try:
         _riporta("switch_cammode rec 0640x0480",
                  _cgi("switch_cammode.cgi", mode="rec", lvqty="0640x0480"))
@@ -633,26 +729,24 @@ def probe_remote() -> None:
             _riporta(f"get_camprop {nome}", risposta)
             (REMOTE_OUT / f"camprop_{nome}.xml").write_bytes(risposta[1])
 
-        for qualita in ("0640x0480", "1024x0768"):
-            if qualita != "0640x0480":
-                _riporta(f"switch_cammode rec {qualita}",
-                         _cgi("switch_cammode.cgi", mode="rec", lvqty=qualita))
-            _riporta(f"startliveview {qualita}",
-                     _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
-            pacchetti = _ricevi(sock, LIVE_SECONDS)
-            _riporta(f"stopliveview {qualita}", _cgi("exec_takemisc.cgi", com="stopliveview"))
-            _analizza(qualita, pacchetti, LIVE_SECONDS)
-            salva_pacchetti(REMOTE_OUT / f"live_{qualita}.bin", pacchetti)
-            _ricevi(sock, 0.5)          # scarta i pacchetti in coda dopo lo stop
+        # rec→rec non cambia la qualità (prima prova): si passa dalla
+        # riproduzione ogni volta.
+        for i, qualita in enumerate(("0640x0480", "1024x0768", "1280x0960")):
+            _riporta("switch_cammode play", _cgi("switch_cammode.cgi", mode="play"))
+            _riporta(f"switch_cammode rec {qualita}",
+                     _cgi("switch_cammode.cgi", mode="rec", lvqty=qualita))
+            _live_prova(sock, qualita, qualita, LIVE_SECONDS, attivi, senza_regola=(i == 0))
 
+        _riporta("switch_cammode play", _cgi("switch_cammode.cgi", mode="play"))
         _riporta("switch_cammode rec 0640x0480 (scatto)",
                  _cgi("switch_cammode.cgi", mode="rec", lvqty="0640x0480"))
 
-        # Nella prima prova, con il live fermo, messa a fuoco e scatto hanno
-        # risposto errorcode 1004, mentre il video, avviato a live acceso,
-        # ha funzionato: questi comandi vanno dati con il live attivo.
-        _riporta("startliveview (scatto)",
-                 _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
+        # Messa a fuoco e scatto vanno dati con il live attivo (con il live
+        # fermo la prima prova ha avuto errorcode 1004). Il ricevitore
+        # continua a leggere per tutto il blocco: niente arretrato.
+        scatto = Ricevitore(sock, 60.0)
+        attivi.append(scatto)
+        _avvia_live(sock, "(scatto)")
 
         risposta = _cgi("exec_takemotion.cgi", com="assignafframe", point="0320x0240")
         _riporta("assignafframe 0320x0240", risposta)
@@ -665,7 +759,7 @@ def probe_remote() -> None:
         time.sleep(1.0)
 
         # L'immagine di revisione si chiede prima a live acceso e, se non
-        # arriva, di nuovo a live fermo: la prima prova non dice quale serve.
+        # arriva, di nuovo a live fermo.
         revisione = (("getrecview", "recview.jpg"), ("getlastjpg", "lastjpg.jpg"))
         arrivate: dict[str, bool] = {}
         for com, file in revisione:
@@ -675,6 +769,14 @@ def probe_remote() -> None:
                 (REMOTE_OUT / file).write_bytes(risposta[1])
 
         _riporta("stopliveview (scatto)", _cgi("exec_takemisc.cgi", com="stopliveview"))
+        time.sleep(0.5)                  # scarico dei pacchetti in coda
+        pacchetti_scatto = scatto.stop()
+        attivi.remove(scatto)
+        step("live durante messa a fuoco e scatto", bool(pacchetti_scatto),
+             f"{len(pacchetti_scatto)} pacchetti; dimensione dal flusso: "
+             f"{_dimensioni(pacchetti_scatto, 0, float('inf'))}")
+        salva_pacchetti(REMOTE_OUT / "live_scatto.bin", pacchetti_scatto)
+
         for com, file in revisione:
             if arrivate[com]:
                 continue
@@ -683,13 +785,11 @@ def probe_remote() -> None:
             if risposta[1][:2] == b"\xff\xd8":
                 (REMOTE_OUT / file).write_bytes(risposta[1])
 
-        # Video con il live attivo: il live continua durante la registrazione?
-        _riporta("startliveview (video)",
-                 _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
-        raccolti: list = []
-        ricevitore = threading.Thread(
-            target=lambda: raccolti.extend(_ricevi(sock, 6.0)), daemon=True)
-        ricevitore.start()
+        # Video con il live attivo e già in ascolto: il live continua durante
+        # la registrazione, e riprende dopo lo stop?
+        video = Ricevitore(sock, 60.0)
+        attivi.append(video)
+        _avvia_live(sock, "(video)")
         time.sleep(1.0)
         inizio_video = time.monotonic()
         risposta = _cgi("exec_takemotion.cgi", com="startmovietake", liveview="on")
@@ -697,12 +797,32 @@ def probe_remote() -> None:
             _riporta("startmovietake (senza liveview)",
                      _cgi("exec_takemotion.cgi", com="startmovietake"))
         time.sleep(3.0)
+        t_stop_inviato = time.monotonic()
         _riporta("stopmovietake", _cgi("exec_takemotion.cgi", com="stopmovietake"))
-        fine_video = time.monotonic()
-        ricevitore.join()
-        durante = sum(1 for t, _o, _p in raccolti if inizio_video <= t <= fine_video)
+        t_stop_tornato = time.monotonic()
+        time.sleep(3.0)                  # ascolto dopo il ritorno di stopmovietake
+        t_fine = time.monotonic()
+        raccolti = video.pacchetti[:]
+        durante = sum(1 for t, _o, _p in raccolti if inizio_video <= t <= t_stop_inviato)
+        dopo = sum(1 for t, _o, _p in raccolti if t > t_stop_tornato)
         step("live durante la registrazione", durante > 0,
-             f"{durante} pacchetti in {fine_video - inizio_video:.1f} s di registrazione")
+             f"{durante} pacchetti in {t_stop_inviato - inizio_video:.1f} s di registrazione")
+        step("live dopo stopmovietake", dopo > 0,
+             f"{dopo} pacchetti nei 3 s dopo il ritorno dello stop")
+        print(f"    dimensione dal flusso: prima {_dimensioni(raccolti, 0, inizio_video)}; "
+              f"durante {_dimensioni(raccolti, inizio_video, t_stop_inviato)}; "
+              f"dopo {_dimensioni(raccolti, t_stop_tornato, t_fine)}")
+        if dopo == 0:
+            _avvia_live(sock, "(dopo il video)")
+            t_riavvio = time.monotonic()
+            time.sleep(2.0)
+            raccolti = video.pacchetti[:]
+            riavviati = sum(1 for t, _o, _p in raccolti if t > t_riavvio)
+            step("live riavviato dopo il video", riavviati > 0,
+                 f"live riavviato dopo il video: {riavviati} pacchetti; dimensione dal "
+                 f"flusso: {_dimensioni(raccolti, t_riavvio, float('inf'))}")
+        raccolti = video.stop()
+        attivi.remove(video)
         salva_pacchetti(REMOTE_OUT / "live_video.bin", raccolti)
     finally:
         # Se un'eccezione arriva a metà video, la registrazione va chiusa
@@ -710,6 +830,8 @@ def probe_remote() -> None:
         # fotocamera risponde con un errore, che qui non conta.
         _cgi("exec_takemotion.cgi", com="stopmovietake")
         _cgi("exec_takemisc.cgi", com="stopliveview")
+        for ricevitore in attivi:
+            ricevitore.stop()
         sock.close()
         stato, _corpo, _ms = _cgi("switch_cammode.cgi", mode="play")
         print("  ripristinata modalità play" if stato == 200
