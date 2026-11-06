@@ -260,3 +260,79 @@ La revisione finale delle fixture del live ha corretto alcune letture del refert
 - Durante la registrazione il fotogramma è 640×360 (16:9) e l'estensione è di 240 byte.
 
 Questi punti si verificano con la terza esecuzione della prova (`diag.py --telecomando`, versione 2).
+
+
+## Terza esecuzione (2026-11-06 22:21)
+
+Terza esecuzione di `diag.py --telecomando` (versione 2), **senza alcuna regola ufw**. Righe del referto (le più lunghe sono troncate):
+
+```
+== Telecomando (modalità scatto, prova v2) ==
+  Scatta una foto e gira un video di 3 secondi.
+  [OK  ] buffer di ricezione — richiesto 4194304 byte, effettivo 8388608 byte (il kernel lo limita a net.core.rmem_max e lo raddoppia)
+  [OK  ] switch_cammode rec 0640x0480 — HTTP 200, 47 ms: (vuoto)
+  [OK  ] get_camprop takemode — HTTP 200, 23 ms: <?xml version="1.0"?><get><value>S</value></get>
+  [OK  ] get_camprop desclist — HTTP 200, 279 ms: <?xml version="1.0"?><desclist><desc><propname>shutspeedvalue</propname><attribute>getset</attribute><value>640</value><enum>60" 50" 40" 30" 25" 20" 1…
+  [OK  ] switch_cammode play — HTTP 200, 37 ms: (vuoto)
+  [OK  ] switch_cammode rec 0640x0480 — HTTP 200, 50 ms: (vuoto)
+  [OK  ] startliveview 0640x0480 — HTTP 200, 315 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funci…
+  [OK  ] stopliveview 0640x0480 — HTTP 200, 360 ms: (vuoto)
+  [OK  ] live 0640x0480 — live senza regola (pacchetto iniziale verso :16540) — 2016 pacchetti, dimensioni 226–1472 byte, origine 192.168.0.10:16540
+    regime stabile (dopo 0,2 s dal ritorno di startliveview): 1764 pacchetti, 84 fotogrammi, 30.00 fotogrammi/s, salti di sequenza 0
+    pacchetti nei primi 0,2 s (arretrato): 189
+    dimensione dal flusso: 640×480
+    marcatori RTP 96, estensioni che sforano 0, RTP non leggibili 0
+    prima estensione: profilo 0x0001, 228 byte, TLV [1, 4, 5, 3, 2, 6, 8, 9, 10, 12, 11, 14, 16, 17, 18, 19, 20, 26]
+  [OK  ] firewall — nessuna regola del firewall necessaria
+  [OK  ] switch_cammode play — HTTP 200, 44 ms: (vuoto)
+  [OK  ] switch_cammode rec 1024x0768 — HTTP 200, 47 ms: (vuoto)
+  [OK  ] startliveview 1024x0768 — HTTP 200, 355 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funci…
+  [OK  ] stopliveview 1024x0768 — HTTP 200, 347 ms: (vuoto)
+  [OK  ] live 1024x0768 — 5344 pacchetti, dimensioni 15–1472 byte, origine 192.168.0.10:16540
+    regime stabile (dopo 0,2 s dal ritorno di startliveview): 4706 pacchetti, 84 fotogrammi, 30.00 fotogrammi/s, salti di sequenza 0
+    pacchetti nei primi 0,2 s (arretrato): 466
+    dimensione dal flusso: 1024×768
+    marcatori RTP 95, estensioni che sforano 0, RTP non leggibili 0
+    prima estensione: profilo 0x0001, 228 byte, TLV [1, 4, 5, 3, 2, 6, 8, 9, 10, 12, 11, 14, 16, 17, 18, 19, 20, 26]
+  [OK  ] switch_cammode play — HTTP 200, 44 ms: (vuoto)
+  [OK  ] switch_cammode rec 1280x0960 — HTTP 200, 49 ms: (vuoto)
+  [OK  ] startliveview 1280x0960 — HTTP 200, 227 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funci…
+  [OK  ] stopliveview 1280x0960 — HTTP 200, 276 ms: (vuoto)
+  [OK  ] live 1280x0960 — 4027 pacchetti, dimensioni 32–1472 byte, origine 192.168.0.10:16540
+    regime stabile (dopo 0,2 s dal ritorno di startliveview): 3615 pacchetti, 43 fotogrammi, 30.00 fotogrammi/s, salti di sequenza 0
+    pacchetti nei primi 0,2 s (arretrato): 288
+    dimensione dal flusso: 1280×960
+    marcatori RTP 46, estensioni che sforano 0, RTP non leggibili 0
+    prima estensione: profilo 0x0001, 228 byte, TLV [1, 4, 5, 3, 2, 6, 8, 9, 10, 12, 11, 14, 16, 17, 18, 19, 20, 26]
+  [OK  ] switch_cammode play — HTTP 200, 41 ms: (vuoto)
+  [OK  ] switch_cammode rec 0640x0480 (scatto) — HTTP 200, 47 ms: (vuoto)
+  [OK  ] startliveview (scatto) — HTTP 200, 273 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funcid…
+  [OK  ] assignafframe 0320x0240 — HTTP 200, 232 ms: <?xml version="1.0"?><response><affocus>ok</affocus><afframepoint>0284x0204</afframepoint><afframesize>0072x0072</afframesize></response>
+  [OK  ] releaseafframe — HTTP 200, 30 ms: (vuoto)
+  [OK  ] starttake — HTTP 200, 538 ms: <?xml version="1.0"?><response><take>ok</take><affocus>ok</affocus><afframepoint>0296x0224</afframepoint><afframesize>0046x0032</afframesize></response>
+  [OK  ] stoptake — HTTP 200, 27 ms: (vuoto)
+  [OK  ] getrecview (live acceso) — HTTP 200, 43 ms: JPEG 38270 byte
+  [OK  ] getlastjpg (live acceso) — HTTP 200, 1034 ms: JPEG 1563988 byte
+  [OK  ] stopliveview (scatto) — HTTP 200, 256 ms: (vuoto)
+  [OK  ] live durante messa a fuoco e scatto — 1595 pacchetti; dimensione dal flusso: 640×480
+  [OK  ] startliveview (video) — HTTP 200, 285 ms: <?xml version="1.0"?><funcidlist><funcid name="framesize"/><funcid name="afframeinfo"/><funcid name="mntmediainfo"/><funcid name="rotation"/><funcid …
+  [OK  ] startmovietake liveview=on — HTTP 200, 490 ms: (vuoto)
+  [OK  ] stopmovietake — HTTP 200, 1625 ms: (vuoto)
+  [OK  ] live durante la registrazione — 2004 pacchetti in 3.5 s di registrazione
+  [OK  ] live dopo stopmovietake — 1896 pacchetti nei 3 s dopo il ritorno dello stop
+    dimensione dal flusso: prima 640×480; durante 640×360, 640×480; dopo 640×360, 640×480
+  ripristinata modalità play
+  [OK  ] nuovi file sulla scheda — HTTP 200, 14 file, ultimi: PB061198.MOV, P9061187.ORF
+
+Fatto. Risposte e pacchetti in diag-downloads/telecomando/.
+```
+
+### Cosa ha chiarito
+
+- **Firewall:** nessuna regola necessaria. Basta un datagramma dalla porta locale 40000 a 192.168.0.10:16540 prima di `startliveview`; la prima esecuzione era fallita perché non ne era stato inviato nessuno. Supera la conclusione della seconda esecuzione.
+- **Qualità:** il cambio con `switch_cammode mode=play` e poi `mode=rec&lvqty=<qualità>` funziona; il TLV 26 conferma 640×480, 1024×768, 1280×960.
+- **Frequenza:** 30 fotogrammi/s a 640×480 e 1024×768 (96 e 95 fotogrammi completi in circa 3,1 s), circa 15 fotogrammi/s a 1280×960 (46 in 3,05 s). La riga «30.00 fotogrammi/s» per 1280×960 è un errore della sonda: conta i timestamp distinti, non i fotogrammi completi.
+- **Regime stabile:** 0 salti di sequenza a tutte le qualità (buffer effettivo 8 MB, ricevitore già attivo); arretrato dei primi 0,2 s: 189 / 466 / 288 pacchetti.
+- **Dopo il video:** il live continua da solo (1896 pacchetti nei 3 s dopo lo stop), con dimensione di nuovo 640×480; durante la registrazione 640×360. L'«arresto» visto nella seconda esecuzione era una finestra di ascolto troppo corta.
+- **Messa a fuoco e scatto con il live acceso:** stesse risposte della seconda esecuzione; getrecview 38 270 byte in 43 ms, getlastjpg 1 563 988 byte in 1034 ms; live durante l'operazione 1595 pacchetti, 76 fotogrammi, 640×480.
+- **Decisioni:** qualità predefinita `1024x0768`; nessuna regola del firewall (l'app invia un datagramma prima di ogni `startliveview`); `RemoteView` segue la dimensione del fotogramma dal TLV 26.

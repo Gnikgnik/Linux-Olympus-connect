@@ -24,6 +24,8 @@ SORGENTE = Path("diag-downloads/telecomando")
 DESTINAZIONE = Path("tests/fixtures/liveview")
 REGISTRAZIONI = {"live_0640x0480.bin": "0640x0480",
                  "live_1024x0768.bin": "1024x0768",
+                 "live_1280x0960.bin": "1280x0960",
+                 "live_scatto.bin": "scatto",
                  "live_video.bin": "video"}
 
 
