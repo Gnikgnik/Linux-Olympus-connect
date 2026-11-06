@@ -248,3 +248,15 @@ Prima esecuzione (21:53), senza regola del firewall: `startliveview` risponde 20
 
 Fatto. Risposte e pacchetti in diag-downloads/telecomando/.
 ```
+
+### Correzioni dopo la revisione
+
+La revisione finale delle fixture del live ha corretto alcune letture del referto sopra (le righe copiate restano com'erano):
+
+- **Frequenza: 30 fotogrammi/s, non 31.** I timestamp RTP sono costanti dentro il fotogramma e crescono di 3000 per fotogramma (90 kHz). Il «31» e il «salto di sequenza» erano artefatti della prova: i primi ~45 pacchetti, letti a t≈0,002 s, sono l'arretrato accumulato nel buffer del kernel mentre la chiamata HTTP `startliveview` bloccava la lettura; il salto di 13–14 pacchetti è un overflow del buffer di ricezione.
+- **La cattura «1024x0768» è in realtà 640×480.** La dimensione, letta dal TLV 26 dell'estensione RTP, è 640×480 in entrambe le catture: `switch_cammode mode=rec&lvqty=1024x0768` dato mentre la fotocamera era già in rec non ha cambiato la qualità. La fixture è stata rinominata `0640x0480-b.json`.
+- **Il video comincia con ~46 pacchetti vecchi** della sessione di scatto (nessuno leggeva il socket durante messa a fuoco e scatto, nessuno svuotamento dopo «stopliveview (scatto)»), poi un salto di sequenza di 1814.
+- **Dopo `stopmovietake` il live si è fermato** (ultimo pacchetto circa 60 ms dopo lo stop). «Live durante la registrazione: sì» vale solo per la registrazione; la ripresa dopo il video è non verificata.
+- Durante la registrazione il fotogramma è 640×360 (16:9) e l'estensione è di 240 byte.
+
+Questi punti si verificano con la terza esecuzione della prova (`diag.py --telecomando`, versione 2).
