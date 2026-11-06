@@ -602,16 +602,38 @@ def probe_remote() -> None:
         _riporta("switch_cammode rec 0640x0480 (scatto)",
                  _cgi("switch_cammode.cgi", mode="rec", lvqty="0640x0480"))
 
+        # Nella prima prova, con il live fermo, messa a fuoco e scatto hanno
+        # risposto errorcode 1004, mentre il video, avviato a live acceso,
+        # ha funzionato: questi comandi vanno dati con il live attivo.
+        _riporta("startliveview (scatto)",
+                 _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
+
         risposta = _cgi("exec_takemotion.cgi", com="assignafframe", point="0320x0240")
         _riporta("assignafframe 0320x0240", risposta)
         (REMOTE_OUT / "af.txt").write_bytes(risposta[1])
         _riporta("releaseafframe", _cgi("exec_takemotion.cgi", com="releaseafframe"))
 
         _riporta("starttake", _cgi("exec_takemotion.cgi", com="starttake"))
+        time.sleep(0.5)
         _riporta("stoptake", _cgi("exec_takemotion.cgi", com="stoptake"))
-        for com, file in (("getrecview", "recview.jpg"), ("getlastjpg", "lastjpg.jpg")):
+        time.sleep(1.0)
+
+        # L'immagine di revisione si chiede prima a live acceso e, se non
+        # arriva, di nuovo a live fermo: la prima prova non dice quale serve.
+        revisione = (("getrecview", "recview.jpg"), ("getlastjpg", "lastjpg.jpg"))
+        arrivate: dict[str, bool] = {}
+        for com, file in revisione:
             risposta = _cgi("exec_takemisc.cgi", com=com)
-            _riporta(com, risposta)
+            arrivate[com] = _riporta(f"{com} (live acceso)", risposta)
+            if risposta[1][:2] == b"\xff\xd8":
+                (REMOTE_OUT / file).write_bytes(risposta[1])
+
+        _riporta("stopliveview (scatto)", _cgi("exec_takemisc.cgi", com="stopliveview"))
+        for com, file in revisione:
+            if arrivate[com]:
+                continue
+            risposta = _cgi("exec_takemisc.cgi", com=com)
+            _riporta(f"{com} (live fermo)", risposta)
             if risposta[1][:2] == b"\xff\xd8":
                 (REMOTE_OUT / file).write_bytes(risposta[1])
 
@@ -637,6 +659,10 @@ def probe_remote() -> None:
              f"{durante} pacchetti in {fine_video - inizio_video:.1f} s di registrazione")
         salva_pacchetti(REMOTE_OUT / "live_video.bin", raccolti)
     finally:
+        # Se un'eccezione arriva a metà video, la registrazione va chiusa
+        # prima di tutto il resto. Se non c'è nessun video in corso la
+        # fotocamera risponde con un errore, che qui non conta.
+        _cgi("exec_takemotion.cgi", com="stopmovietake")
         _cgi("exec_takemisc.cgi", com="stopliveview")
         sock.close()
         stato, _corpo, _ms = _cgi("switch_cammode.cgi", mode="play")
