@@ -212,3 +212,102 @@ def test_real_camera_samples_match_exiv2(fixture_bytes):
                 assert letto == Fraction(grezzo), (nome, campo)
         if "Exif.Photo.Flash" in valori:
             assert info.flash_fired is bool(int(valori["Exif.Photo.Flash"]) & 1), nome
+
+
+# --- formattazione -----------------------------------------------------------
+
+from olympus_connect.core.exif import FormattedShot, format_shot  # noqa: E402
+
+
+def _riga(info, etichetta):
+    return dict(format_shot(info).rows).get(etichetta)
+
+
+@pytest.mark.parametrize("tempo,testo", [
+    (Fraction(1, 4000), "1/4000 s"),
+    (Fraction(1, 60), "1/60 s"),
+    (Fraction(10, 600), "1/60 s"),
+    (Fraction(1, 3), "1/3 s"),
+    (Fraction(1), "1 s"),
+    (Fraction(5, 2), "2,5 s"),
+    (Fraction(30), "30 s"),
+])
+def test_exposure_time(tempo, testo):
+    assert format_shot(ShotInfo(exposure_time=tempo)).headline == testo
+
+
+@pytest.mark.parametrize("f,testo", [
+    (Fraction(18, 10), "f/1,8"), (Fraction(8), "f/8"), (Fraction(56, 10), "f/5,6"),
+])
+def test_aperture(f, testo):
+    assert format_shot(ShotInfo(f_number=f)).headline == testo
+
+
+@pytest.mark.parametrize("ev,testo", [
+    (Fraction(0), "0 EV"),
+    (Fraction(3, 10), "+0,3 EV"),
+    (Fraction(1, 3), "+0,3 EV"),
+    (Fraction(-7, 10), "−0,7 EV"),
+    (Fraction(-2, 3), "−0,7 EV"),
+    (Fraction(-1, 50), "0 EV"),
+    (Fraction(2), "+2 EV"),
+])
+def test_exposure_bias_uses_the_true_minus_sign(ev, testo):
+    assert _riga(ShotInfo(exposure_bias=ev), "Compensazione") == testo
+
+
+def test_headline_joins_the_four_numbers_in_order():
+    info = ShotInfo(exposure_time=Fraction(1, 60), f_number=Fraction(7, 2),
+                    iso=6400, focal_length=Fraction(14))
+    assert format_shot(info).headline == "1/60 s   f/3,5   ISO 6400   14 mm"
+
+
+def test_headline_skips_missing_numbers():
+    info = ShotInfo(iso=200, focal_length=Fraction(45))
+    assert format_shot(info).headline == "ISO 200   45 mm"
+
+
+def test_focal_length_keeps_a_meaningful_decimal():
+    assert format_shot(ShotInfo(focal_length=Fraction(175, 10))).headline == "17,5 mm"
+
+
+def test_rows_follow_the_fixed_order_and_skip_missing_fields():
+    info = ShotInfo(lens="M.Zuiko 45mm F1.8", exposure_program=3,
+                    exposure_bias=Fraction(0), white_balance=1,
+                    flash_fired=True, width=5184, height=3888)
+    assert format_shot(info).rows == (
+        ("Obiettivo", "M.Zuiko 45mm F1.8"),
+        ("Modalità", "Priorità dei diaframmi"),
+        ("Compensazione", "0 EV"),
+        ("Bilanciamento", "Manuale"),
+        ("Flash", "Scattato"),
+        ("Risoluzione", "5184 × 3888"),
+    )
+
+
+@pytest.mark.parametrize("programma,testo", [
+    (1, "Manuale"), (2, "Programma"), (3, "Priorità dei diaframmi"),
+    (4, "Priorità dei tempi"),
+])
+def test_exposure_program_names(programma, testo):
+    assert _riga(ShotInfo(exposure_program=programma), "Modalità") == testo
+
+
+def test_unknown_exposure_program_omits_the_row():
+    assert _riga(ShotInfo(exposure_program=7, iso=100), "Modalità") is None
+
+
+def test_flash_not_fired_and_auto_white_balance():
+    info = ShotInfo(flash_fired=False, white_balance=0)
+    assert _riga(info, "Flash") == "Non scattato"
+    assert _riga(info, "Bilanciamento") == "Auto"
+
+
+def test_resolution_needs_both_sides():
+    assert _riga(ShotInfo(width=5200), "Risoluzione") is None
+
+
+def test_a_single_field_gives_a_single_row_and_no_headline():
+    shot = format_shot(ShotInfo(lens="LUMIX G VARIO 14-42/F3.5-5.6 II"))
+    assert shot == FormattedShot(
+        headline="", rows=(("Obiettivo", "LUMIX G VARIO 14-42/F3.5-5.6 II"),))

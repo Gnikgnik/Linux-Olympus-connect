@@ -199,3 +199,67 @@ def _positive(value: Fraction | None) -> Fraction | None:
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+# -- formattazione ------------------------------------------------------------
+
+HEADLINE_SEPARATOR = "   "
+MINUS = "−"
+TIMES = "×"
+
+_PROGRAMS = {1: "Manuale", 2: "Programma", 3: "Priorità dei diaframmi",
+             4: "Priorità dei tempi"}
+_WHITE_BALANCE = {0: "Auto", 1: "Manuale"}
+
+
+@dataclass(frozen=True)
+class FormattedShot:
+    headline: str
+    rows: tuple[tuple[str, str], ...]
+
+
+def _decimal(value: float) -> str:
+    """Una cifra decimale al massimo, solo se non nulla, virgola italiana."""
+    return f"{value:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def format_exposure_time(value: Fraction) -> str:
+    if value < 1:
+        return f"1/{round(1 / value)} s"
+    return f"{_decimal(float(value))} s"
+
+
+def format_bias(value: Fraction) -> str:
+    rounded = round(float(value), 1)
+    if rounded == 0:
+        return "0 EV"
+    sign = "+" if rounded > 0 else MINUS
+    return f"{sign}{_decimal(abs(rounded))} EV"
+
+
+def format_shot(info: ShotInfo) -> FormattedShot:
+    numbers: list[str] = []
+    if info.exposure_time is not None:
+        numbers.append(format_exposure_time(info.exposure_time))
+    if info.f_number is not None:
+        numbers.append(f"f/{_decimal(float(info.f_number))}")
+    if info.iso is not None:
+        numbers.append(f"ISO {info.iso}")
+    if info.focal_length is not None:
+        numbers.append(f"{_decimal(float(info.focal_length))} mm")
+
+    rows: list[tuple[str, str]] = []
+    if info.lens:
+        rows.append(("Obiettivo", info.lens))
+    if info.exposure_program in _PROGRAMS:
+        rows.append(("Modalità", _PROGRAMS[info.exposure_program]))
+    if info.exposure_bias is not None:
+        rows.append(("Compensazione", format_bias(info.exposure_bias)))
+    if info.white_balance in _WHITE_BALANCE:
+        rows.append(("Bilanciamento", _WHITE_BALANCE[info.white_balance]))
+    if info.flash_fired is not None:
+        rows.append(("Flash", "Scattato" if info.flash_fired else "Non scattato"))
+    if info.width and info.height:
+        rows.append(("Risoluzione", f"{info.width} {TIMES} {info.height}"))
+
+    return FormattedShot(HEADLINE_SEPARATOR.join(numbers), tuple(rows))
