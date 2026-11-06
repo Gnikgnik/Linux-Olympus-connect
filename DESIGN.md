@@ -246,7 +246,7 @@ Three horizontal zones over a single status row, built from `QLayout`, not a gri
 
 - **Rail** (left, 232px fixed): connection state with camera model, the kind-filter rows with per-kind count and weight, the "Mostra" filter, the destination.
 - **Work area** (centre, elastic): a 46px command bar (view toggles left, selection summary, primary action right) over the thumbnail grid or detail list, on `{colors.sunken}`.
-- **Inspector** (right, 348px fixed): the large preview over a label/value detail grid.
+- **Inspector** (right, 348px fixed): the large preview over a label/value detail grid, then the Shot section (exposure headline in Strong 13px/600, label/value rows for the fields present). Shot data arrives after the details, so it sits below them and never pushes them down.
 - **Status row** (bottom, one line only): current file, the two progress bars, rate and ETA, Annulla, and Riprova when relevant. Transfer controls live *in* the status bar; a second strip above it would make two status rows where the layout promises one.
 
 Both side panels collapse to **36px** and expand back over 180ms. Collapsed, the panel keeps its toggle button at the top and a rotated name down the column, so what was hidden can be found again. Minimum window: 880×560.

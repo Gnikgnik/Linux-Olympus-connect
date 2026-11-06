@@ -191,3 +191,16 @@ Il profilo `olympus-connect-<ssid>` è creato con le impostazioni previste, e la
 ### Non verificato
 
 La sonda estesa di `set_timeout` (modalità `rec` e valori limite) **non è stata eseguita**: l'ultimo referto contiene solo i tentativi in modalità `play`, tutti falliti con `HTTP 520` / `errorcode 1006`. Se un valore venisse accettato in `rec`, il keep-alive sarebbe recuperabile e con esso una difesa reale sui video da centinaia di MB. Resta aperto come miglioramento, non come difetto.
+
+## Aggiornamento 2026-11-06: dati di scatto
+
+Prova eseguita con `diag.py`, sezione «Dati di scatto»:
+
+```
+  [SALTATO] get_exif .JPG: nessun file
+  [FAIL] get_exif .ORF — HTTP 200, application/octet-stream, 66560 byte, 57 ms, forma: sconosciuta, inizio: 49 49 52 4f 08 00 00 00 17 00 00 01 04 00 01 00
+  [SALTATO] get_exif .MOV: nessun file
+  [FAIL] EXIF dentro l'anteprima di un ORF — HTTP 200, 1228288 byte, nessun blocco Exif
+```
+
+Fonte scelta: **A**, `get_exif.cgi`. Per un ORF risponde `200`, `application/octet-stream`, 66 560 byte in 57 ms, e comincia con l'intestazione `IIRO`. Il `FAIL` dell'etichetta ORF è solo del rilevatore di forma della sonda, che allora non conosceva l'intestazione ORF `IIRO`; da allora è stato corretto in `diag.py`. Per JPG e MOV la prova è stata saltata perché non c'erano file di quel tipo sulla scheda. L'EXIF dentro l'anteprima di un ORF non contiene un blocco Exif, quindi la fonte B non è utilizzabile per i RAW.

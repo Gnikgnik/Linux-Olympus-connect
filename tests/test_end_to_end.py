@@ -70,6 +70,9 @@ def fake_camera(qapp):
                 cartella = parse_qs(url.query)["DIR"][0]
                 f = "imglist_dcim.csv" if cartella == "/DCIM" else "imglist_dcim_100olymp.csv"
                 return self._send((FIXTURES / f).read_bytes(), "text/plain")
+            if nome == "get_exif.cgi":
+                return self._send((FIXTURES / "exif" / "orf.bin").read_bytes(),
+                                  "application/octet-stream")
             if nome == "get_thumbnail.cgi":
                 return self._send(miniatura, "image/jpeg")
             if nome == "get_screennail.cgi":
@@ -135,6 +138,42 @@ def test_real_client_loads_listing_thumbnails_and_preview(qapp, fake_camera,
         # 1161 richieste alla fotocamera.
         miniature = fake_camera.richieste.count("get_thumbnail.cgi")
         assert 0 < miniature < 100
+    finally:
+        finestra.close()
+        qapp.processEvents()
+
+
+def test_real_client_shows_shot_data_of_the_selected_raw(qapp, fake_camera, tmp_path):
+    if not (FIXTURES / "exif" / "orf.bin").exists():
+        pytest.skip("fixture EXIF assente: eseguire diag.py con la fotocamera")
+    impostazioni = QSettings(str(tmp_path / "e2e.ini"), QSettings.Format.IniFormat)
+    impostazioni.setValue("dest_root", str(tmp_path / "dest"))
+    finestra = MainWindow(
+        client_factory=lambda: OlympusClient(base_url=fake_camera.base_url),
+        network_factory=_Net,
+        settings=impostazioni,
+    )
+    try:
+        finestra.resize(1366, 740)
+        finestra.show()
+        finestra.on_refresh()
+        assert _attendi(qapp, lambda: finestra._model.rowCount() == 1161)
+
+        modello = finestra._model
+        riga = next(r for r in range(modello.rowCount())
+                    if modello.job_at(modello.index(r, 0)).media.name.upper()
+                    .endswith(".ORF"))
+        finestra._grid.selectionModel().select(
+            finestra._model.index(riga, 0),
+            QItemSelectionModel.SelectionFlag.Select |
+            QItemSelectionModel.SelectionFlag.Rows)
+
+        assert _attendi(qapp, lambda: not finestra._shot.isHidden()), \
+            "la sezione Scatto non è comparsa"
+        assert not finestra._shot.is_unavailable(), \
+            "la sezione dice «non disponibili» sui byte veri della fotocamera"
+        assert "ISO" in finestra._shot.headline_text()
+        assert "get_exif.cgi" in fake_camera.richieste
     finally:
         finestra.close()
         qapp.processEvents()
