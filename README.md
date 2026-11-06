@@ -158,12 +158,19 @@ olympus_connect/
 │   ├── protocol.py     OlympusClient: HTTP e protocollo OPC
 │   ├── network.py      diagnostica e profilo NetworkManager
 │   ├── downloader.py   pianificazione, .part, rinomina atomica
+│   ├── stats.py        velocità, tempo stimato, formattazione delle misure
 │   └── errors.py
 ├── gui/             worker su QThread, il core non sa che Qt esista
-│   ├── workers.py      ListWorker, ThumbWorker, DownloadWorker
+│   ├── workers.py      ListWorker, ThumbWorker, PreviewWorker, DownloadWorker
 │   ├── grid.py         modello a colonne, griglia ed elenco
+│   ├── preview.py      anteprima grande da get_screennail
+│   ├── panels.py       pannelli laterali richiudibili e animati
+│   ├── theme.py        palette scura e foglio di stile
+│   ├── icons.py        icone disegnate a tracciato, un solo peso
 │   └── main_window.py
-└── diag.py          strumento diagnostico, eseguibile da solo
+└── resources/       icona dell'applicazione, dettagliata e semplificata
+diag.py              strumento diagnostico, eseguibile da solo
+install-desktop.sh   voce di menu, icone e comando nella home
 ```
 
 I download sono **seriali** per scelta: il server della fotocamera è un microcontrollore e più richieste in volo insieme lo degradano. Per lo stesso motivo le miniature si sospendono durante un trasferimento.
