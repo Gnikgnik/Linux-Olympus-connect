@@ -45,7 +45,7 @@ Dalla lista dei comandi della fotocamera: `get_exif.cgi` esiste e prende un solo
 - **A, consigliata:** `get_exif.cgi?DIR=<percorso>`, una richiesta dedicata.
 - **B, ripiego:** l'EXIF contenuto nel JPEG dell'anteprima, se la fotocamera ve lo copia. Nessuna richiesta in più.
 
-Vince A se restituisce i dati attesi; altrimenti B se l'anteprima li contiene; se nessuna delle due funziona la funzionalità si ferma alla prova sul campo, prima di scrivere codice dell'interfaccia. La scelta viene annotata in questa specifica.
+**Esito della prova sul campo (2026-11-06):** fonte **A**. `get_exif.cgi` risponde HTTP 200 in 57 ms con 66 560 byte per un ORF; l'intestazione è `IIRO`, la variante ORF dell'intestazione TIFF, e i byte sono i primi 66 560 del file ORF stesso. Per JPG e MOV la prova non è stata possibile, perché la scheda conteneva solo file ORF: restano da verificare. L'anteprima non contiene un blocco Exif, quindi la fonte B è esclusa.
 
 ## Architettura
 
@@ -57,6 +57,8 @@ Vince A se restituisce i dati attesi; altrimenti B se l'anteprima li contiene; s
   - EXIF grezzo che inizia con l'intestazione TIFF (`II*\0` o `MM\0*`);
   - un blocco che inizia con `Exif\0\0` seguito dall'intestazione TIFF;
   - un JPEG intero (`FF D8`): scorre i segmenti fino all'APP1 `Exif\0\0`.
+
+  Accetta come intestazione TIFF anche quelle degli ORF Olympus: `IIRO` e `IIRS` (little-endian) e `MMOR` (big-endian), con la stessa struttura di `II*\0` e `MM\0*`; `get_exif.cgi` restituisce un ORF in questa forma.
 
   Legge IFD0 e la sotto-IFD EXIF (puntatore 0x8769), nient'altro. Gestisce entrambi gli ordini dei byte. **Non solleva mai eccezioni**: input vuoto, troncato, puntatori fuori dai limiti, IFD che rimandano a se stesse o tipi inattesi producono `None` oppure un `ShotInfo` con i soli campi leggibili. Un `ShotInfo` con tutti i campi a `None` diventa `None`.
 - `ShotInfo`, dataclass immutabile, tutti i campi facoltativi: `exposure_time: Fraction | None`, `f_number: Fraction | None`, `iso: int | None`, `focal_length: Fraction | None`, `lens: str | None`, `exposure_bias: Fraction | None`, `exposure_program: int | None`, `white_balance: int | None`, `flash_fired: bool | None`, `width: int | None`, `height: int | None`.

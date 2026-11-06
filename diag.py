@@ -299,6 +299,8 @@ def _exif_shape(body: bytes) -> str:
         return "blocco Exif"
     if body[:2] == b"\xff\xd8":
         return "JPEG"
+    if body[:4] in (b"IIRO", b"IIRS", b"MMOR"):
+        return "ORF (TIFF Olympus)"
     return "sconosciuta"
 
 
