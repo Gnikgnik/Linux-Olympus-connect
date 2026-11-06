@@ -6,6 +6,10 @@ al suo access point:
 
     python3 diag.py
 
+Con l'opzione --telecomando prova invece la modalità scatto (visione dal
+vivo, messa a fuoco, scatto, video): scatta davvero una foto e gira un
+video di 3 secondi. Ghiera su P, A, S, M o iAuto.
+
 Risponde a quattro domande:
   - la fotocamera risponde solo con lo User-Agent di OI.Share?
   - RAW (.ORF) e video (.MOV) sono scaricabili via GET?
@@ -18,8 +22,11 @@ che diventa la base dei test automatici.
 from __future__ import annotations
 
 import socket
+import struct
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import requests
@@ -424,12 +431,238 @@ def probe_keepalive() -> None:
         step("get_unusedcapacity", False, type(exc).__name__)
 
 
-def run() -> int:
+# -- telecomando --------------------------------------------------------------
+
+LIVE_PORT = 40000           # fissa: una regola del firewall vale anche al secondo tentativo
+LIVE_SECONDS = 5.0
+REMOTE_OUT = Path("diag-downloads/telecomando")
+
+
+def rtp_summary(packet: bytes) -> dict | None:
+    """I campi dell'intestazione RTP (RFC 3550) di un pacchetto del live.
+
+    Non interpreta il contenuto: serve a scoprire come la fotocamera spezza
+    i fotogrammi. None per un pacchetto più corto dell'intestazione fissa.
+    """
+    if len(packet) < 12:
+        return None
+    b0, b1 = packet[0], packet[1]
+    seq, timestamp, ssrc = struct.unpack(">HII", packet[2:12])
+    csrc = b0 & 0x0F
+    pos = 12 + 4 * csrc
+    extension = (b0 >> 4) & 1
+    ext_profile = ext_len = None
+    if extension and len(packet) >= pos + 4:
+        ext_profile, words = struct.unpack(">HH", packet[pos:pos + 4])
+        ext_len = 4 * words
+        pos += 4 + ext_len
+    payload = packet[pos:] if pos <= len(packet) else b""
+    return {
+        "version": b0 >> 6, "padding": (b0 >> 5) & 1, "extension": extension,
+        "csrc": csrc, "marker": b1 >> 7, "payload_type": b1 & 0x7F,
+        "seq": seq, "timestamp": timestamp, "ssrc": ssrc,
+        "ext_profile": ext_profile, "ext_len": ext_len,
+        "header_len": min(pos, len(packet)), "payload_len": len(payload),
+        "payload_soi": payload[:2] == b"\xff\xd8",
+        "payload_eoi": payload[-2:] == b"\xff\xd9",
+    }
+
+
+def salva_pacchetti(path: Path, pacchetti: list[tuple[float, tuple[str, int], bytes]]) -> None:
+    """Registra i pacchetti grezzi: tempo relativo al primo, lunghezza, byte."""
+    inizio = pacchetti[0][0] if pacchetti else 0.0
+    with path.open("wb") as f:
+        for t, _origine, dati in pacchetti:
+            f.write(struct.pack(">dI", t - inizio, len(dati)) + dati)
+
+
+def leggi_pacchetti(path: Path) -> list[tuple[float, bytes]]:
+    dati = path.read_bytes()
+    out: list[tuple[float, bytes]] = []
+    pos = 0
+    while pos + 12 <= len(dati):
+        t, n = struct.unpack(">dI", dati[pos:pos + 12])
+        out.append((t, dati[pos + 12:pos + 12 + n]))
+        pos += 12 + n
+    return out
+
+
+def _cgi(path: str, **params) -> tuple[int, bytes, float]:
+    """Una richiesta alla fotocamera: (stato, corpo, millisecondi). Non solleva."""
+    inizio = time.monotonic()
+    try:
+        r = requests.get(f"{BASE}/{path}", headers=UA, params=params, timeout=TIMEOUT)
+        return r.status_code, r.content, (time.monotonic() - inizio) * 1000
+    except requests.RequestException as exc:
+        return 0, type(exc).__name__.encode(), (time.monotonic() - inizio) * 1000
+
+
+def _riporta(nome: str, risposta: tuple[int, bytes, float]) -> bool:
+    stato, corpo, ms = risposta
+    if corpo[:2] == b"\xff\xd8":
+        testo = f"JPEG {len(corpo)} byte"
+    else:
+        testo = " ".join(corpo[:160].decode("utf-8", "replace").split()) or "(vuoto)"
+    return step(nome, stato == 200, f"HTTP {stato}, {ms:.0f} ms: {testo}")
+
+
+def _ricevi(sock: socket.socket, secondi: float) -> list[tuple[float, tuple[str, int], bytes]]:
+    pacchetti: list[tuple[float, tuple[str, int], bytes]] = []
+    sock.settimeout(0.25)
+    fine = time.monotonic() + secondi
+    while time.monotonic() < fine:
+        try:
+            dati, origine = sock.recvfrom(65535)
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+        pacchetti.append((time.monotonic(), origine, dati))
+    return pacchetti
+
+
+def _regole_firewall() -> None:
+    print("    Probabile blocco del firewall. Per riprovare, apri la porta")
+    print("    solo per la fotocamera, riesegui, poi richiudila:")
+    print(f"      sudo ufw allow in from 192.168.0.10 proto udp to any port {LIVE_PORT}")
+    print(f"      sudo ufw delete allow in from 192.168.0.10 proto udp to any port {LIVE_PORT}")
+
+
+def _analizza(nome: str, pacchetti, secondi: float) -> None:
+    if not pacchetti:
+        step(f"live {nome}", False, f"nessun pacchetto in {secondi:.0f} s")
+        _regole_firewall()
+        return
+    sommari = [s for s in (rtp_summary(p) for _t, _o, p in pacchetti) if s]
+    dimensioni = [len(p) for _t, _o, p in pacchetti]
+    origini = sorted({f"{o[0]}:{o[1]}" for _t, o, _p in pacchetti})
+    inizi = sum(1 for s in sommari if s["payload_soi"])
+    marcatori = sum(1 for s in sommari if s["marker"])
+    fini = sum(1 for s in sommari if s["payload_eoi"])
+    salti = sum(1 for a, b in zip(sommari, sommari[1:])
+                if (b["seq"] - a["seq"]) % 65536 != 1)
+    step(f"live {nome}", True,
+         f"{len(pacchetti)} pacchetti ({len(pacchetti) / secondi:.0f}/s), "
+         f"circa {inizi / secondi:.1f} fotogrammi/s, dimensioni "
+         f"{min(dimensioni)}–{max(dimensioni)} byte, origine {', '.join(origini)}")
+    print(f"    inizi JPEG {inizi}, marcatori RTP {marcatori}, fini JPEG {fini}, "
+          f"salti di sequenza {salti}, RTP non leggibili {len(pacchetti) - len(sommari)}")
+    if sommari:
+        s = sommari[0]
+        print(f"    RTP: versione {s['version']}, payload type {s['payload_type']}, "
+              f"CSRC {s['csrc']}, padding {s['padding']}")
+    con_estensione = [(s, p) for s, (_t, _o, p) in zip(sommari, pacchetti) if s["extension"]]
+    print(f"    pacchetti con estensione: {len(con_estensione)}")
+    if con_estensione:
+        s, p = con_estensione[0]
+        print(f"    prima estensione: profilo 0x{s['ext_profile']:04x}, {s['ext_len']} byte, "
+              f"intestazione {p[:min(s['header_len'], 48)].hex(' ')}")
+
+
+def probe_remote() -> None:
+    """La modalità scatto: live, messa a fuoco, scatto, revisione, video.
+
+    Gira solo con --telecomando: scatta davvero una foto e gira un video di
+    3 secondi. Pacchetti e immagini restano in diag-downloads/, perché
+    mostrano ciò che la fotocamera inquadra.
+    """
+    print("\n== Telecomando (modalità scatto) ==")
+    print("  Scatta una foto e gira un video di 3 secondi.")
+    REMOTE_OUT.mkdir(parents=True, exist_ok=True)
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("", LIVE_PORT))
+    except OSError as exc:
+        step(f"porta UDP {LIVE_PORT}", False, f"{type(exc).__name__}: {exc}")
+        return
+
+    try:
+        _riporta("switch_cammode rec 0640x0480",
+                 _cgi("switch_cammode.cgi", mode="rec", lvqty="0640x0480"))
+
+        for nome, params in (("takemode", {"com": "get", "propname": "takemode"}),
+                             ("desclist", {"com": "desc", "propname": "desclist"})):
+            risposta = _cgi("get_camprop.cgi", **params)
+            _riporta(f"get_camprop {nome}", risposta)
+            (REMOTE_OUT / f"camprop_{nome}.xml").write_bytes(risposta[1])
+
+        for qualita in ("0640x0480", "1024x0768"):
+            if qualita != "0640x0480":
+                _riporta(f"switch_cammode rec {qualita}",
+                         _cgi("switch_cammode.cgi", mode="rec", lvqty=qualita))
+            _riporta(f"startliveview {qualita}",
+                     _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
+            pacchetti = _ricevi(sock, LIVE_SECONDS)
+            _riporta(f"stopliveview {qualita}", _cgi("exec_takemisc.cgi", com="stopliveview"))
+            _analizza(qualita, pacchetti, LIVE_SECONDS)
+            salva_pacchetti(REMOTE_OUT / f"live_{qualita}.bin", pacchetti)
+            _ricevi(sock, 0.5)          # scarta i pacchetti in coda dopo lo stop
+
+        _riporta("switch_cammode rec 0640x0480 (scatto)",
+                 _cgi("switch_cammode.cgi", mode="rec", lvqty="0640x0480"))
+
+        risposta = _cgi("exec_takemotion.cgi", com="assignafframe", point="0320x0240")
+        _riporta("assignafframe 0320x0240", risposta)
+        (REMOTE_OUT / "af.txt").write_bytes(risposta[1])
+        _riporta("releaseafframe", _cgi("exec_takemotion.cgi", com="releaseafframe"))
+
+        _riporta("starttake", _cgi("exec_takemotion.cgi", com="starttake"))
+        _riporta("stoptake", _cgi("exec_takemotion.cgi", com="stoptake"))
+        for com, file in (("getrecview", "recview.jpg"), ("getlastjpg", "lastjpg.jpg")):
+            risposta = _cgi("exec_takemisc.cgi", com=com)
+            _riporta(com, risposta)
+            if risposta[1][:2] == b"\xff\xd8":
+                (REMOTE_OUT / file).write_bytes(risposta[1])
+
+        # Video con il live attivo: il live continua durante la registrazione?
+        _riporta("startliveview (video)",
+                 _cgi("exec_takemisc.cgi", com="startliveview", port=LIVE_PORT))
+        raccolti: list = []
+        ricevitore = threading.Thread(
+            target=lambda: raccolti.extend(_ricevi(sock, 6.0)), daemon=True)
+        ricevitore.start()
+        time.sleep(1.0)
+        inizio_video = time.monotonic()
+        risposta = _cgi("exec_takemotion.cgi", com="startmovietake", liveview="on")
+        if not _riporta("startmovietake liveview=on", risposta):
+            _riporta("startmovietake (senza liveview)",
+                     _cgi("exec_takemotion.cgi", com="startmovietake"))
+        time.sleep(3.0)
+        _riporta("stopmovietake", _cgi("exec_takemotion.cgi", com="stopmovietake"))
+        fine_video = time.monotonic()
+        ricevitore.join()
+        durante = sum(1 for t, _o, _p in raccolti if inizio_video <= t <= fine_video)
+        step("live durante la registrazione", durante > 0,
+             f"{durante} pacchetti in {fine_video - inizio_video:.1f} s di registrazione")
+        salva_pacchetti(REMOTE_OUT / "live_video.bin", raccolti)
+    finally:
+        _cgi("exec_takemisc.cgi", com="stopliveview")
+        sock.close()
+        stato, _corpo, _ms = _cgi("switch_cammode.cgi", mode="play")
+        print("  ripristinata modalità play" if stato == 200
+              else "  ATTENZIONE: impossibile ripristinare la modalità play")
+
+    stato, corpo, ms = _cgi("get_imglist.cgi", DIR="/DCIM/100OLYMP")
+    nomi = [r.split(",")[1] for r in corpo.decode("ascii", "replace").splitlines()
+            if r.count(",") == 5]
+    step("nuovi file sulla scheda", stato == 200 and bool(nomi),
+         f"HTTP {stato}, {len(nomi)} file, ultimi: {', '.join(nomi[-2:])}")
+
+
+def run(telecomando: bool = False) -> int:
     from datetime import datetime
 
     print(f"Olympus Connect — diagnostica ({datetime.now():%Y-%m-%d %H:%M:%S})")
     if not ladder():
         return 1
+    if telecomando:
+        # Niente registrazione delle fixture e niente altre prove: questa
+        # esecuzione serve solo alla modalità scatto, e non deve riscrivere
+        # tests/fixtures/ con i dati veri della scheda.
+        probe_remote()
+        print("\nFatto. Risposte e pacchetti in diag-downloads/telecomando/.")
+        return 0
     try:
         files = record()
     except requests.RequestException as exc:
@@ -455,7 +688,7 @@ def main() -> int:
     tee = Tee(REPORT)
     sys.stdout = tee
     try:
-        return run()
+        return run(telecomando="--telecomando" in sys.argv[1:])
     except Exception as exc:                     # il referto deve sopravvivere
         print(f"\nErrore inatteso: {type(exc).__name__}: {exc}")
         import traceback
