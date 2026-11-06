@@ -185,6 +185,19 @@ class OlympusClient:
         scaricarlo, cosa che una miniatura da 9 KB non consente."""
         return self._get_ok("get_screennail.cgi", DIR=camera_path).content
 
+    def has_exif(self) -> bool:
+        """La fotocamera restituisce i dati di scatto di un file?
+
+        Dichiarato dalla E-M10 Mark IV; formato e tempi misurati sul campo,
+        vedi la specifica 2026-11-06-dati-di-scatto-design.md. Dove manca,
+        la sezione dei dati di scatto non compare.
+        """
+        return "get_exif" in self.commands
+
+    def exif(self, camera_path: str) -> bytes:
+        """I dati di scatto grezzi di un file, da leggere con parse_exif."""
+        return self._get_ok("get_exif.cgi", DIR=camera_path).content
+
     # -- download ---------------------------------------------------------
 
     @contextmanager

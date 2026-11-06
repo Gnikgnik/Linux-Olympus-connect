@@ -169,6 +169,32 @@ def test_has_screennail_false_when_camera_lacks_it():
     assert client.has_screennail() is False
 
 
+def test_exif_returns_the_raw_bytes(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_exif.cgi", content=b"II*\x00dati")
+    assert OlympusClient().exif("/DCIM/100OLYMP/A.ORF") == b"II*\x00dati"
+    assert requests_mock.last_request.qs["dir"] == ["/dcim/100olymp/a.orf"]
+
+
+def test_exif_raises_on_http_error(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_exif.cgi", status_code=404)
+    with pytest.raises(ProtocolError):
+        OlympusClient().exif("/DCIM/100OLYMP/A.ORF")
+
+
+def test_has_exif_reads_the_real_commandlist(fixture_bytes):
+    import xml.etree.ElementTree as ElementTree
+    client = OlympusClient()
+    radice = ElementTree.fromstring(fixture_bytes("commandlist.xml"))
+    client.commands = {e.attrib["name"].strip() for e in radice.iter("cgi")}
+    assert client.has_exif() is True
+
+
+def test_has_exif_false_when_camera_lacks_it():
+    client = OlympusClient()
+    client.commands = {"get_thumbnail"}
+    assert client.has_exif() is False
+
+
 def test_open_stream_reports_total_from_content_length(requests_mock):
     requests_mock.get(f"{BASE_URL}/DCIM/100OLYMP/A.JPG",
                       content=b"x" * 1000,
