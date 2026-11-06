@@ -17,6 +17,11 @@ campione troncato, ma lo vede nel file completo, e lì stanno il seriale
 interno del corpo e quello dell'obiettivo, che ricompaiono identici nel
 campione.
 
+Esce con 1, senza scrivere nulla, se exiv2 manca, se fallisce su un file
+intero, se un ORF intero non ha alcuna chiave seriale o se non trova
+nessun seriale: in questi casi non si può garantire l'anonimizzazione.
+Non stampa mai i valori dei seriali, solo conteggi e nomi di file.
+
 Scrive anche tests/fixtures/exif/attesi.json con i valori letti da exiv2,
 che i test confrontano con parse_exif.
 """
@@ -24,6 +29,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -71,7 +77,7 @@ def exiv2(dati: bytes) -> dict[str, str]:
     return valori
 
 
-def seriali(campioni: dict[str, bytes]) -> set[str]:
+def seriali(campioni: dict[str, bytes], problemi: list[str]) -> set[str]:
     trovati: set[str] = set()
     if CAMINFO.exists():
         radice = ElementTree.fromstring(CAMINFO.read_bytes())
@@ -83,29 +89,51 @@ def seriali(campioni: dict[str, bytes]) -> set[str]:
             if "serial" in chiave.lower() and len(valore.strip()) >= 4:
                 trovati.add(valore.strip())
     # File interi: exiv2 ne legge il MakerNote, che nel campione troncato no.
+    # Qui il controllo è severo: un errore di exiv2 o un ORF senza alcuna
+    # chiave "serial" significa che un seriale potrebbe sfuggire.
     cartella = Path("diag-downloads")
     if cartella.is_dir():
         for p in sorted(cartella.iterdir()):
-            if p.suffix.lower() in (".orf", ".jpg") and p.name.lower() != "seriali.txt":
+            if p.suffix.lower() in (".orf", ".jpg"):
                 r = subprocess.run(["exiv2", "-q", "-Pkv", str(p)],
                                    capture_output=True, text=True, errors="replace")
+                if r.returncode != 0:
+                    problemi.append(f"exiv2 ha fallito su {p.name}")
+                chiavi_serial = 0
                 for riga in r.stdout.splitlines():
                     chiave, _, valore = riga.partition(" ")
-                    if "serial" in chiave.lower() and len(valore.strip()) >= 4:
-                        trovati.add(valore.strip())
+                    if "serial" in chiave.lower():
+                        chiavi_serial += 1
+                        if len(valore.strip()) >= 4:
+                            trovati.add(valore.strip())
+                if p.suffix.lower() == ".orf" and chiavi_serial == 0:
+                    problemi.append(f"nessuna chiave seriale in {p.name}")
     # I segnaposto già anonimi non sono seriali da cercare.
     return {s for s in trovati if set(s) - {"X", "Y", "0"}}
 
 
 def main() -> int:
+    if shutil.which("exiv2") is None:
+        print("ERRORE: exiv2 non è installato; nessun file modificato.")
+        return 1
     campioni = {p.name: p.read_bytes() for p in sorted(CARTELLA.iterdir())
                 if p.suffix == ".bin"}
     if not campioni:
         print("Nessuna fixture in tests/fixtures/exif/: eseguire diag.py.")
         return 1
 
-    da_togliere = seriali(campioni)
+    problemi: list[str] = []
+    da_togliere = seriali(campioni, problemi)
     print(f"Seriali da togliere: {len(da_togliere)}")
+    if problemi:
+        for problema in problemi:
+            print(f"ATTENZIONE: {problema}")
+        print("Nessun file modificato: i seriali potrebbero sfuggire.")
+        return 1
+    if not da_togliere:
+        print("ERRORE: nessun seriale trovato: impossibile garantire "
+              "l'anonimizzazione. Nessun file modificato.")
+        return 1
 
     for nome, dati in campioni.items():
         sostituzioni = 0
@@ -120,7 +148,10 @@ def main() -> int:
     rimasti = [(n, s) for n, d in campioni.items() for s in da_togliere
                if s.encode("ascii", "replace") in d]
     if rimasti:
-        print(f"ERRORE: seriali ancora presenti: {rimasti}")
+        # Mai stampare i valori: solo conteggio e nomi dei file.
+        nomi = sorted({n for n, _ in rimasti})
+        print(f"ERRORE: {len(rimasti)} seriali ancora presenti in: "
+              f"{', '.join(nomi)}")
         return 1
 
     attesi = {}
