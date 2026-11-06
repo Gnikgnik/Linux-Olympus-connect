@@ -29,14 +29,22 @@ REGISTRAZIONI = {"live_0640x0480.bin": "0640x0480",
 
 def struttura(pacchetti: list[tuple[float, bytes]], qualita: str) -> dict:
     righe = []
+    scartati = 0
     for t, dati in pacchetti:
         s = rtp_summary(dati)
         if s is None:
+            continue
+        if s["ext_overflow"]:
+            # l'intestazione non è delimitabile: niente rischio di portare
+            # dati del fotogramma nella fixture
+            scartati += 1
             continue
         righe.append({"t": round(t, 4),
                       "intestazione": dati[:s["header_len"]].hex(),
                       "payload_len": s["payload_len"],
                       "soi": s["payload_soi"], "eoi": s["payload_eoi"]})
+    if scartati:
+        print(f"  {qualita}: {scartati} pacchetti con estensione che sfora, saltati")
     secondi = round(pacchetti[-1][0], 3) if pacchetti else 0.0
     return {"qualita": qualita, "secondi": secondi, "pacchetti": righe}
 

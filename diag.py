@@ -452,9 +452,17 @@ def rtp_summary(packet: bytes) -> dict | None:
     pos = 12 + 4 * csrc
     extension = (b0 >> 4) & 1
     ext_profile = ext_len = None
+    ext_overflow = False
+    header_cap = None
     if extension and len(packet) >= pos + 4:
         ext_profile, words = struct.unpack(">HH", packet[pos:pos + 4])
         ext_len = 4 * words
+        if pos + 4 + ext_len > len(packet):
+            # Estensione che sfora: non si sa dove finisce l'intestazione.
+            # Si registra solo la parte fissa, mai il pacchetto intero
+            # (conterrebbe il fotogramma).
+            ext_overflow = True
+            header_cap = pos + 4
         pos += 4 + ext_len
     payload = packet[pos:] if pos <= len(packet) else b""
     return {
@@ -462,10 +470,48 @@ def rtp_summary(packet: bytes) -> dict | None:
         "csrc": csrc, "marker": b1 >> 7, "payload_type": b1 & 0x7F,
         "seq": seq, "timestamp": timestamp, "ssrc": ssrc,
         "ext_profile": ext_profile, "ext_len": ext_len,
-        "header_len": min(pos, len(packet)), "payload_len": len(payload),
+        "header_len": header_cap if header_cap is not None else min(pos, len(packet)),
+        "ext_overflow": ext_overflow, "payload_len": len(payload),
         "payload_soi": payload[:2] == b"\xff\xd8",
         "payload_eoi": payload[-2:] == b"\xff\xd9",
     }
+
+
+def rtp_tlvs(packet: bytes) -> list[tuple[int, bytes]]:
+    """I TLV dell'estensione RTP: (id, valore). [] se manca o è malformata.
+
+    Ogni TLV: id (2 byte), lunghezza in parole da 32 bit (2 byte), valore.
+    Non solleva mai.
+    """
+    try:
+        if len(packet) < 12 or not (packet[0] >> 4) & 1:
+            return []
+        pos = 12 + 4 * (packet[0] & 0x0F)
+        if len(packet) < pos + 4:
+            return []
+        _profilo, words = struct.unpack(">HH", packet[pos:pos + 4])
+        fine = pos + 4 + 4 * words
+        if fine > len(packet):
+            return []
+        pos += 4
+        out: list[tuple[int, bytes]] = []
+        while pos + 4 <= fine:
+            ident, n = struct.unpack(">HH", packet[pos:pos + 4])
+            if pos + 4 + 4 * n > fine:
+                return []
+            out.append((ident, packet[pos + 4:pos + 4 + 4 * n]))
+            pos += 4 + 4 * n
+        return out
+    except Exception:
+        return []
+
+
+def rtp_frame_size(packet: bytes) -> tuple[int, int] | None:
+    """Larghezza e altezza del fotogramma dal TLV 26, None se assente."""
+    for ident, valore in rtp_tlvs(packet):
+        if ident == 26 and len(valore) >= 8:
+            return struct.unpack(">II", valore[:8])
+    return None
 
 
 def salva_pacchetti(path: Path, pacchetti: list[tuple[float, tuple[str, int], bytes]]) -> None:

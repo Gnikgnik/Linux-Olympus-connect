@@ -5,7 +5,7 @@ dipende lo strumento che ricava le fixture dai pacchetti registrati.
 """
 import struct
 
-from diag import leggi_pacchetti, rtp_summary, salva_pacchetti
+from diag import leggi_pacchetti, rtp_frame_size, rtp_summary, rtp_tlvs, salva_pacchetti
 
 
 def _rtp(marker=0, seq=7, ts=1000, ssrc=0x1234, ext=None, payload=b"\xff\xd8ab"):
@@ -57,3 +57,56 @@ def test_empty_capture_writes_an_empty_file(tmp_path):
     salva_pacchetti(path, [])
     assert path.read_bytes() == b""
     assert leggi_pacchetti(path) == []
+
+
+def _tlv(ident, valore):
+    return struct.pack(">HH", ident, len(valore) // 4) + valore
+
+
+def _con_tlv():
+    ext = _tlv(1, b"\x00\x00\x00\x07") + _tlv(2, b"\x00" * 8) \
+        + _tlv(26, struct.pack(">II", 640, 480))
+    return _rtp(ext=(0x0001, ext))
+
+
+def test_tlvs_of_the_extension_and_frame_size():
+    pacchetto = _con_tlv()
+    tlvs = rtp_tlvs(pacchetto)
+    assert [i for i, _v in tlvs] == [1, 2, 26]
+    assert tlvs[0][1] == b"\x00\x00\x00\x07"
+    assert rtp_frame_size(pacchetto) == (640, 480)
+
+
+def test_no_extension_means_no_tlvs_and_no_size():
+    assert rtp_tlvs(_rtp()) == []
+    assert rtp_frame_size(_rtp()) is None
+    ext = _tlv(1, b"\x00" * 4)
+    assert rtp_frame_size(_rtp(ext=(1, ext))) is None
+
+
+def test_tlvs_never_raise_on_truncation():
+    pacchetto = _con_tlv()
+    for n in range(len(pacchetto) + 1):
+        assert isinstance(rtp_tlvs(pacchetto[:n]), list)
+        rtp_frame_size(pacchetto[:n])
+    assert rtp_tlvs(b"") == [] and rtp_frame_size(b"") is None
+
+
+def test_tlv_overrunning_the_extension_is_malformed():
+    ext = struct.pack(">HH", 26, 50) + b"\x00" * 8     # dichiara 200 byte, ne ha 8
+    assert rtp_tlvs(_rtp(ext=(1, ext))) == []
+
+
+def test_overflowing_extension_never_exposes_the_whole_packet():
+    # l'estensione dichiara 400 byte ma il pacchetto è molto più corto:
+    # l'intestazione da registrare è quella fissa più le 4 byte dell'estensione.
+    pacchetto = struct.pack(">BBHII", 0x90, 96, 1, 2, 3) + struct.pack(">HH", 1, 100) \
+        + b"\xff\xd8" + b"\x11" * 60
+    s = rtp_summary(pacchetto)
+    assert s["header_len"] == 12 + 4
+    assert s["ext_overflow"] is True
+    assert rtp_summary(_rtp(ext=(1, b"\x00" * 8)))["ext_overflow"] is False
+    con_csrc = bytearray(pacchetto)
+    con_csrc[0] |= 0x02
+    con_csrc[12:12] = b"\x00" * 8
+    assert rtp_summary(bytes(con_csrc))["header_len"] == 12 + 8 + 4
