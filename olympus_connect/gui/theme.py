@@ -106,6 +106,9 @@ QMainWindow::separator {{ width: 0px; height: 0px; }}
 
 #content {{ background: {SUNKEN}; }}
 
+/* Pagine dell'ispettore: trasparenti, così si vede il fondo del pannello. */
+#inspectorPages, #inspectorPage {{ background: transparent; }}
+
 #sectionLabel {{
     color: {TEXT_FAINT};
     font-size: {SIZE_LABEL}px;

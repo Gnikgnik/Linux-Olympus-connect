@@ -845,3 +845,161 @@ def test_closing_in_remote_mode_returns_the_camera_to_play(qapp, settings):
     assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
     win.close()
     assert ("ensure_play_mode",) in _RecordingClient.chiamate
+
+
+# --- telecomando: correzioni della revisione ----------------------------------------------
+
+import time  # noqa: E402
+
+
+def test_inspector_pages_show_the_panel_background(qapp, settings):
+    """Stack e pagina nuovi non vanno dipinti con lo sfondo della finestra."""
+    from olympus_connect.gui import theme
+    qapp.setStyleSheet(theme.STYLESHEET)
+    win = _telecomando(settings)
+    try:
+        def colore():
+            qapp.processEvents()
+            pagine = win._inspector_pages
+            punto = pagine.mapTo(win, pagine.rect().bottomLeft())
+            immagine = win.grab().toImage()
+            return immagine.pixelColor(punto.x() + 6, punto.y() - 6).name()
+        assert colore() == theme.PANEL.lower()
+        win._view_remote.click()
+        assert colore() == theme.PANEL.lower()
+    finally:
+        win.close()
+        qapp.setStyleSheet("")
+
+
+def test_remote_toggle_is_disabled_while_a_listing_is_in_flight(remote_win, qapp):
+    win = remote_win
+    assert win._view_remote.isEnabled()
+    win.on_refresh()
+    assert not win._view_remote.isEnabled()
+    assert _attendi(qapp, lambda: win._view_remote.isEnabled())
+
+
+def test_listing_controls_are_disabled_in_remote_mode_and_restored(remote_win, qapp):
+    win = remote_win
+    win._show_transfer(True, con_riprova=True)
+    win._view_remote.click()
+    assert not win._refresh_button.isEnabled()
+    assert not win._connect_button.isEnabled()
+    assert not win._resume_button.isEnabled()
+    win._view_grid.click()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert win._refresh_button.isEnabled() and win._connect_button.isEnabled()
+    assert win._resume_button.isEnabled()
+
+
+def test_a_listing_arriving_in_remote_mode_leaves_the_view_alone(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    win.on_listed([])
+    assert win._views.currentWidget() is win._remote_view
+    assert win._thumb_worker is None and win._preview_worker is None
+
+
+def test_resume_that_finishes_inside_the_call_leaves_downloading_false(remote_win, qapp):
+    win = remote_win
+
+    class _Scarico:
+        def resume(self):
+            win.on_download_finished()      # arriva dentro la chiamata, come dal vero
+
+    win._download_worker = _Scarico()
+    win.on_resume()
+    win._download_worker = None        # il finto non sa farsi cancellare alla chiusura
+    assert not win._downloading
+    assert _attendi(qapp, lambda: win._view_remote.isEnabled())
+
+
+class _SlowClient(_RemoteStubClient):
+    def stop_liveview(self):
+        time.sleep(2.0)
+        super().stop_liveview()
+
+    def ensure_play_mode(self):
+        time.sleep(2.0)
+        super().ensure_play_mode()
+
+
+def test_closing_is_bounded_with_a_slow_camera(qapp, settings):
+    from olympus_connect.gui import main_window
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    _RemoteStubClient.revisione = _jpeg_valido()
+    win = MainWindow(client_factory=_SlowClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    inizio = time.monotonic()
+    win.close()
+    assert time.monotonic() - inizio < 3.5
+    # il thread staccato finisce da solo: lo si aspetta, perché non muoia vivo
+    for thread, _worker in list(main_window._DETACHED):
+        assert thread.wait(8000)
+    main_window._DETACHED.clear()
+
+
+class _LeaveClient(_RemoteStubClient):
+    def stop_liveview(self):
+        time.sleep(0.5)
+        super().stop_liveview()
+
+
+def test_retry_listening_and_focus_are_ignored_while_leaving(qapp, settings):
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    _RemoteStubClient.revisione = _jpeg_valido()
+    win = MainWindow(client_factory=_LeaveClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    try:
+        win._view_remote.click()
+        assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+        win.exit_remote("griglia")
+        win._remote_view.retry_requested.emit()
+        win.on_live_listening(5555)
+        win._remote_view.focus_requested.emit(10, 10)
+        assert not win._remote_view._retry.isVisible()
+        assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+        _attendi(qapp, lambda: False, 0.3)
+        nomi = [c[0] for c in _RecordingClient.chiamate]
+        assert nomi.count("enter_rec_mode") == 1
+        assert "assign_af" not in nomi
+    finally:
+        win.close()
+
+
+class _FailingClient(_RemoteStubClient):
+    def start_liveview(self, port):
+        raise RuntimeError("niente live")
+
+
+def test_commands_stay_disabled_when_entering_fails(qapp, settings):
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    win = MainWindow(client_factory=_FailingClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    try:
+        win._view_remote.click()
+        falliti = []
+        win._remote_worker.failed.connect(falliti.append)
+        assert _attendi(qapp, lambda: falliti)
+        _attendi(qapp, lambda: False, 0.2)
+        assert not win._remote_panel._shoot.isEnabled()
+        win._shortcut_shoot.activated.emit()
+        _attendi(qapp, lambda: False, 0.2)
+        assert ("take_picture",) not in _RecordingClient.chiamate
+    finally:
+        win.close()
