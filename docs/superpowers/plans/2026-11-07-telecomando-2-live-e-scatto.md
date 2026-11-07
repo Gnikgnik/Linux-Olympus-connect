@@ -2916,10 +2916,10 @@ Non è codice: è la verifica che i test non possono fare. Il controllore guida 
 
 - [ ] **Step 1: L'utente prova il telecomando**
 
-Con la fotocamera in Wi-Fi e collegata (dal pulsante Connetti dell'app), ghiera su P, A, S o M:
+Con la fotocamera in Wi-Fi e collegata (dal pulsante Connetti dell'app), ghiera su P, A, S o M, lanciando l'app **da terminale** (così errori e avvisi di Qt si vedono):
 
 ```bash
-.venv/bin/python -m olympus_connect
+OLYMPUS_DEBUG=1 .venv/bin/python -m olympus_connect
 ```
 
 Sequenza da provare e riferire:
@@ -2932,7 +2932,21 @@ Sequenza da provare e riferire:
 
 - [ ] **Step 2: Il punto delicato: le coordinate della messa a fuoco a 1024×768**
 
-La prova sul campo ha misurato la messa a fuoco solo con il live a 640×480. Se al punto 2 il fuoco cade **sistematicamente spostato verso l'alto a sinistra** (per esempio un clic nell'angolo in basso a destra mette a fuoco al centro), la fotocamera usa coordinate 640×480 anche con il live a 1024×768: il fix è convertire il punto in `on_remote_focus_requested` moltiplicando per `640 / larghezza` e `480 / altezza` del fotogramma corrente prima di emettere `remote_focus`, e convertire l'area di `touch_area` al contrario prima di `set_touch_area`, con un test in `tests/test_main_window.py`. Se il fuoco cade dove si è cliccato, nessun cambiamento.
+La messa a fuoco è stata misurata solo con il live a 640×480. Si lancia l'app con la diagnostica accesa, così la risposta della fotocamera si legge invece di indovinarla:
+
+```bash
+OLYMPUS_DEBUG=1 .venv/bin/python -m olympus_connect
+```
+
+Entrando nel telecomando il terminale stampa il valore di `touchactiveframe` letto a 1024×768; a ogni clic il punto inviato e la risposta grezza di `assignafframe` (con `afframepoint`). Il clic decisivo è **al centro** dell'immagine (punto inviato circa 0512x0384), poi uno **interno fuori centro** (per esempio a un terzo da sinistra e dall'alto); gli angoli non decidono nulla, perché il limite all'area di tocco li sposta comunque.
+
+| Caso | `touchactiveframe` a 1024 | Clic al centro: `afframepoint` | Dove va il fuoco | Correzione |
+|---|---|---|---|---|
+| **A** | scalato (circa `0153-0115_0717x0538`) | circa `0476x0348` (centro meno metà riquadro) | dove si clicca | nessuna |
+| **B** | invariato `0096-0072_0448x0336` | lontano dal centro (verso il basso a destra) | spostato in basso a destra | convertire **sia il punto** (×640/larghezza, ×480/altezza) **sia l'area** (al contrario) in `on_remote_focus_requested` / `on_remote_entered` |
+| **C** | invariato `0096-0072_0448x0336` | circa `0476x0348` | dove si clicca, ma i clic lontani dal centro restano confinati in alto a sinistra | convertire **solo l'area** (×larghezza/640, ×altezza/480) prima di `set_touch_area` |
+
+Ogni correzione va fatta con un test in `tests/test_main_window.py` e revisionata come un task. Usa una scena con soggetti vicini e lontani e un diaframma aperto, così si vede bene dove cade il fuoco.
 
 - [ ] **Step 3: Annota l'esito**
 
