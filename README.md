@@ -38,6 +38,7 @@ L'applicazione ufficiale vede **2 file su 1161**. Chi scatta in RAW non ha nessu
 | Download video `.MOV` | ✅ provato fino a 129 MB; sulla scheda ci sono file da 944 MB |
 | Miniature per JPEG, RAW e video | ✅ `get_thumbnail.cgi` restituisce JPEG validi di 8–13 KB per tutti i tipi |
 | Dati di scatto prima di scaricare | ✅ tempo, diaframma, ISO, focale, obiettivo e altri, da `get_exif.cgi` (verificato sui RAW; JPEG e video da verificare) |
+| Telecomando: live, messa a fuoco col tocco, scatto, video | ✅ live a 1024×768 e 30 fotogrammi/s, nessuna regola del firewall |
 | Richieste `Range` (ripresa) | ❌ **non supportate**: risponde `200` senza `Content-Range` |
 | `set_timeout.cgi` (keep-alive) | ❌ dichiarato ma risponde `520` / `errorcode 1006` |
 | `get_unusedcapacity.cgi` | ❌ restituisce `0xFFFFFFFF`, sentinella di «non disponibile» |
@@ -101,6 +102,12 @@ olympus-connect            # se hai eseguito install-desktop.sh
 
 I file finiscono in `~/Immagini/Olympus/ANNO/ANNO-MM-GG/NOME.EXT`, con la data di modifica impostata alla data di scatto. La cartella di destinazione è configurabile e viene ricordata, insieme alla vista, ai filtri e all'SSID.
 
+### Telecomando
+
+Con la fotocamera collegata, il pulsante **Telecomando** nella barra in alto mostra il live al centro della finestra. Un clic sull'immagine mette a fuoco in quel punto; **Scatta** (o la barra spaziatrice) scatta e mostra la foto per due secondi; **Registra** (o il tasto R) avvia e ferma un video. Tornando a Miniature o a Elenco la fotocamera torna in riproduzione e l'elenco si aggiorna con i file nuovi. Le impostazioni di scatto (tempi, diaframmi, ISO) si cambiano sulla fotocamera.
+
+Non serve aprire porte nel firewall: prima di avviare il live il PC manda un pacchetto alla fotocamera, e il firewall accetta le risposte. Se il live non arriva comunque, l'app lo dice e suggerisce la regola da aggiungere.
+
 ### Il profilo di rete
 
 Alla prima connessione viene creato un profilo NetworkManager chiamato `olympus-connect-<ssid>`, con:
@@ -147,7 +154,7 @@ Fuori scope anche live view, scatto remoto, sincronizzazione dell'orologio e log
 .venv/bin/python -m pytest
 ```
 
-314 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
+421 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
 
 Il test più importante è `test_download_recovers_from_drop_at_half_without_range`: un server locale chiude la connessione a metà del corpo **e** ignora il `Range`, cioè riproduce esattamente il comportamento di questa fotocamera. Verifica che il recupero produca un file corretto invece di un file corrotto.
 
@@ -162,12 +169,15 @@ olympus_connect/
 │   ├── downloader.py   pianificazione, .part, rinomina atomica
 │   ├── stats.py        velocità, tempo stimato, formattazione delle misure
 │   ├── exif.py         dati di scatto dall'EXIF standard, in italiano
+│   ├── liveview.py     pacchetti RTP del live, ricomposizione dei fotogrammi
 │   └── errors.py
 ├── gui/             worker su QThread, il core non sa che Qt esista
 │   ├── workers.py      ListWorker, ThumbWorker, PreviewWorker, DownloadWorker
 │   ├── grid.py         modello a colonne, griglia ed elenco
 │   ├── preview.py      anteprima grande da get_screennail
 │   ├── shot.py         sezione Scatto del pannello
+│   ├── liveview.py     ricezione del live su un thread
+│   ├── remote.py       vista del live e comandi del telecomando
 │   ├── panels.py       pannelli laterali richiudibili e animati
 │   ├── theme.py        palette scura e foglio di stile
 │   ├── icons.py        icone disegnate a tracciato, un solo peso
