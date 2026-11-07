@@ -359,3 +359,83 @@ Dopo la correzione della porta del datagramma di apertura (commit `033cbe9`), se
 | Chiusura dal live | non provata con la fotocamera (l'app è stata chiusa dall'elenco); coperta dai test |
 
 Esito dichiarato dall'utente: tutto funziona.
+
+
+## Impostazioni dal PC (2026-11-08)
+
+Esito: passa. Referto della prova:
+
+```
+Prova impostazioni 2026-11-08 00:31:14
+play 200, rec 200
+startliveview porta 49679: 200
+live: 1574 pacchetti nel primo secondo
+  desclist iniziale: HTTP 200, 5463 byte
+originali: {'takemode': 'A', 'isospeedvalue': '200', 'focalvalue': '3.5', 'shutspeedvalue': '250', 'expcomp': '0.0', 'wbvalue': '0', 'drivemode': 'lowvib-normal'}
+== formato di set_camprop ==
+  xml con dichiarazione: HTTP 200, risposta <?xml version="1.0"?><response><drivemode>lowvib-normal</drivemode><cameradrivemode>normal</cameradrivemode></response>, riletto 250 (bersaglio 250)
+  -> formato funzionante: xml con dichiarazione
+  ISO rimesso a 200: HTTP 200, riletto 200
+== modalità ==
+takemode P: riletto P
+  desclist P: HTTP 200, 5463 byte
+  shutspeedvalue: getset, valore 250, 58 valori (livecomp…4000)
+  focalvalue: getset, valore 5.6, 40 valori (1.0…91)
+  isospeedvalue: getset, valore 200, 24 valori (Auto…25600)
+  expcomp: getset, valore 0.0, 31 valori (-5.0…+5.0)
+takemode A: riletto A
+  desclist A: HTTP 200, 5463 byte
+  shutspeedvalue: getset, valore 250, 58 valori (livecomp…4000)
+  focalvalue: getset, valore 3.5, 40 valori (1.0…91)
+  isospeedvalue: getset, valore 200, 24 valori (Auto…25600)
+  expcomp: getset, valore 0.0, 31 valori (-5.0…+5.0)
+takemode S: riletto S
+  desclist S: HTTP 200, 5436 byte
+  shutspeedvalue: getset, valore 640, 55 valori (60"…4000)
+  focalvalue: getset, valore 5.6, 40 valori (1.0…91)
+  isospeedvalue: getset, valore 200, 24 valori (Auto…25600)
+  expcomp: getset, valore 0.0, 31 valori (-5.0…+5.0)
+takemode M: riletto M
+  desclist M: HTTP 200, 5313 byte
+  shutspeedvalue: getset, valore 640, 58 valori (livecomp…4000)
+  focalvalue: getset, valore 3.5, 40 valori (1.0…91)
+  isospeedvalue: getset, valore 200, 24 valori (Auto…25600)
+  expcomp: getset, valore 0.0, 1 valori (0.0…0.0)
+== richieste non consentite ==
+takemode S: riletto S
+  in S, focalvalue=6.3: HTTP 200 <?xml version="1.0"?><response><drivemode>lowvib-normal</drivemode><cameradrivemode>normal</cameradrivemode></response>, riletto 6.3 (prima 5.6)
+takemode A: riletto A
+  in A, shutspeedvalue=320: HTTP 200 <?xml version="1.0"?><response><drivemode>lowvib-normal</drivemode><cameradrivemode>normal</cameradrivemode></response>, riletto 320 (prima 250)
+takemode A: riletto A
+  in A, focalvalue=1.0: HTTP 200 <?xml version="1.0"?><response><drivemode>lowvib-normal</drivemode><cameradrivemode>normal</cameradrivemode></response>, riletto 1.0 (prima 3.5)
+== bilanciamento e scatto ==
+  wbvalue=18: HTTP 200 <?xml version="1.0"?><response><drivemode>lowvib-normal</drivemode><cameradrivemode>normal</cameradrivemode></response>, riletto 18
+  drivemode=silent-normal: HTTP 200 <?xml version="1.0"?><response><drivemode>silent-normal</drivemode><cameradrivemode>normal</cameradrivemode></response>, riletto silent-normal
+== ripristino ==
+  takemode P: riletto P
+  P shutspeedvalue=250: HTTP 200, riletto 250
+  P focalvalue=5.6: HTTP 200, riletto 5.6
+  P expcomp=0.0: HTTP 200, riletto 0.0
+  P isospeedvalue=200: HTTP 200, riletto 200
+  takemode S: riletto S
+  S shutspeedvalue=640: HTTP 200, riletto 640
+  S focalvalue=5.6: HTTP 200, riletto 5.6
+  S expcomp=0.0: HTTP 200, riletto 0.0
+  S isospeedvalue=200: HTTP 200, riletto 200
+  takemode M: riletto M
+  M shutspeedvalue=640: HTTP 200, riletto 640
+  M focalvalue=3.5: HTTP 200, riletto 3.5
+  M expcomp=0.0: HTTP 200, riletto 0.0
+  M isospeedvalue=200: HTTP 200, riletto 200
+  takemode A: riletto A
+  A shutspeedvalue=250: HTTP 200, riletto 250
+  A focalvalue=3.5: HTTP 200, riletto 3.5
+  A expcomp=0.0: HTTP 200, riletto 0.0
+  A isospeedvalue=200: HTTP 200, riletto 200
+  A wbvalue=0: HTTP 200, riletto 0
+  A drivemode=lowvib-normal: HTTP 200, riletto lowvib-normal
+ripristino completo
+stopliveview 200
+ritorno in riproduzione 200
+live ricevuto in tutto: 18460 pacchetti
+```

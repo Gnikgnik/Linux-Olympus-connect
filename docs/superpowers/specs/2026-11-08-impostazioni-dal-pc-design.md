@@ -29,6 +29,8 @@ Dall'elenco `get_camprop.cgi?com=desc&propname=desclist` registrato il 2026-11-0
 | `ArtEffectType<Filtro>` | sì | `Type1 Type2` (alcuni anche `Type3`) |
 | `SceneSub` | sì | `Portrait ePortrait LandscapeAndPerson NightViewPerson NightView NightBlastOffFirework NightLiveComposit Landscape Sunset BeachAndSnow HDRShooting Candle SilentShooting` |
 
+La prova del 2026-11-08 (P, A, S, M) ha mostrato che la fotocamera tiene valori separati per ogni modalità, che in P, A, M l'elenco del tempo comincia con `livecomp livetime livebulb` (58 valori; 55 in S) e che in M `expcomp` ha il solo valore `0.0`. La scala del diaframma (`1.0 … 91`) non è quella dell'obiettivo e i valori fuori obiettivo (per esempio `focalvalue=1.0` col 12-32) vengono accettati senza errore: la parte 2 deve limitare il diaframma alla gamma dell'obiettivo (da determinare).
+
 Dalla lista dei comandi: `set_camprop.cgi` usa **POST** con `com=set` e `propname`; il corpo non è dichiarato. Dal protocollo OPC il formato atteso è `<?xml version="1.0"?><set><value>VALORE</value></set>`. **Non verificato.**
 
 Dal pezzo C: i comandi della modalità scatto si mandano con il live acceso; la fotocamera risponde agli errori con HTTP 520 e `<errorcode>`.
@@ -46,7 +48,7 @@ Script `diag-downloads/prova_impostazioni.py` (ignorato da git), che gira **senz
 
 Non scatta e non registra. La ghiera fisica non viene toccata.
 
-**Cancello.** Se nessuna variante cambia un valore, il lavoro si ferma qui. L'esito, con le regole per modalità ricavate, viene annotato in questa specifica e nel resoconto sul campo.
+**Cancello: passa (prova sul campo del 2026-11-08).** Formato funzionante: `POST set_camprop.cgi?com=set&propname=<nome>` con corpo `<?xml version="1.0"?><set><value>VALORE</value></set>` (nessun Content-Type necessario), per esempio `POST set_camprop.cgi?com=set&propname=isospeedvalue` con `<?xml version="1.0"?><set><value>250</value></set>`. Risposta HTTP 200 con corpo `<?xml version="1.0"?><response><drivemode>…</drivemode><cameradrivemode>…</cameradrivemode></response>`, uguale qualunque proprietà si imposti; l'effetto si verifica rileggendo la proprietà (ISO 200 → 250 → 200). Nessuna richiesta è stata rifiutata: `focalvalue` in S, `shutspeedvalue` in A e `focalvalue=1.0` in A (obiettivo LUMIX G VARIO 12-32 f/3,5–5,6) hanno dato HTTP 200 e il valore riletto era quello impostato; quindi nessun `errorcode` da gestire per questi casi. Anche `wbvalue=18` e `drivemode=silent-normal` sono stati accettati e riletti. Ripristino completo di tutti i valori originali. Dettagli nel resoconto sul campo.
 
 ## Architettura
 
@@ -58,6 +60,7 @@ Non scatta e non registra. La ghiera fisica non viene toccata.
 - `parse_desclist(body: bytes) -> dict[str, CameraProp]`: legge ogni `<desc>`; `settable` = `"set" in attribute`; un `desc` malformato si salta; corpo illeggibile → dizionario vuoto. Non solleva.
 - `format_value(name: str, value: str) -> str`, in italiano:
   - `shutspeedvalue`: `60"` → `60 s`, `1.3"` → `1,3 s`, `250` → `1/250`, `1.3` → `1/1,3`;
+    in P, A, M l'elenco comincia con `livecomp`, `livetime`, `livebulb`, che si mostrano «Live Composite», «Live Time», «Live Bulb»;
   - `focalvalue`: `5.6` → `f/5,6`, `10` → `f/10`;
   - `isospeedvalue`: `Auto` → `Auto`, `Low` → `Low`, numeri invariati;
   - `expcomp`: `0.0` → `0 EV`, `+0.3` → `+0,3 EV`, `-0.7` → `−0,7 EV` (segno meno U+2212);
@@ -69,7 +72,7 @@ Non scatta e non registra. La ghiera fisica non viene toccata.
   - `SceneSub`: Ritratto, e-Ritratto, Paesaggio e ritratto, Ritratto notturno, Notturno, Fuochi d'artificio, Live Composite notturno, Paesaggio, Tramonto, Spiaggia e neve, HDR, Lume di candela, Silenzioso;
   - un valore senza traduzione si mostra così com'è.
 - `visible_props(props: dict[str, CameraProp]) -> list[str]`: i nomi delle righe da mostrare, in quest'ordine: `takemode`, `shutspeedvalue`, `focalvalue`, `isospeedvalue`, `expcomp`, `wbvalue`, `drivemode`; poi `artfilter` e `ArtEffectType<filtro corrente>` solo se `takemode` è `ART`; `SceneSub` solo se è `Scene2`. Solo le proprietà presenti nell'elenco.
-- `is_automatic(name: str, props) -> bool`: le righe che la modalità attuale lascia alla fotocamera; regola di partenza (da confermare con la prova): in `iAuto` tutte quelle di esposizione tranne `takemode`; in `P` tempo e diaframma; in `A` il tempo; in `S` il diaframma; in `M` nessuna; più ogni proprietà non `settable`.
+- `is_automatic(name: str, props) -> bool`: le righe che la modalità attuale lascia alla fotocamera; regola verificata dalla prova, per modalità, perché l'`attribute` dell'elenco non la distingue (in P, A, S, M tempo, diaframma, ISO e compensazione sono tutti `getset` e la fotocamera accetta ogni richiesta): in `iAuto` tutte quelle di esposizione tranne `takemode`; in `P` tempo e diaframma; in `A` il tempo; in `S` il diaframma; in `M` nessuna; più ogni proprietà non `settable`; più ogni proprietà il cui `enum` ha al massimo un valore (bloccata: in M `expcomp` dichiara il solo `0.0`).
 - `step(prop: CameraProp, current: str, delta: int) -> str`: il valore a `delta` passi nell'elenco dichiarato, fermo agli estremi (niente giro).
 
 **`core/protocol.py`.**
