@@ -578,3 +578,149 @@ def test_describe_error_explains_code_1004():
 
 def test_describe_error_shows_other_codes():
     assert "1005" in describe_error(ProtocolError("x", code=1005))
+
+
+# --- telecomando -----------------------------------------------------------------
+
+class _RemoteClient:
+    def __init__(self, fail=None):
+        self.commands = {"exec_takemotion"}
+        self.calls = []
+        self._fail = fail or {}
+
+    def _call(self, nome, *args):
+        self.calls.append((nome, *args))
+        if nome in self._fail:
+            raise self._fail[nome]
+
+    def enter_rec_mode(self, quality):
+        self._call("enter_rec_mode", quality)
+
+    def start_liveview(self, port):
+        self._call("start_liveview", port)
+
+    def stop_liveview(self):
+        self._call("stop_liveview")
+
+    def take_mode(self):
+        self._call("take_mode")
+        return "S"
+
+    def touch_area(self):
+        self._call("touch_area")
+        return (96, 72, 448, 336)
+
+    def assign_af(self, x, y):
+        self._call("assign_af", x, y)
+        return True
+
+    def take_picture(self):
+        self._call("take_picture")
+
+    def rec_view(self):
+        self._call("rec_view")
+        return b"\xff\xd8rev"
+
+    def start_movie(self):
+        self._call("start_movie")
+
+    def stop_movie(self):
+        self._call("stop_movie")
+
+    def ensure_play_mode(self):
+        self._call("ensure_play_mode")
+
+
+def _remote(client):
+    from olympus_connect.gui.workers import RemoteWorker
+    worker = RemoteWorker(client, "1024x0768")
+    ev = {k: [] for k in ("entered", "focused", "shot", "started", "stopped", "left", "failed")}
+    worker.entered.connect(lambda m, a: ev["entered"].append((m, a)))
+    worker.focused.connect(ev["focused"].append)
+    worker.shot.connect(ev["shot"].append)
+    worker.movie_started.connect(lambda: ev["started"].append(True))
+    worker.movie_stopped.connect(lambda: ev["stopped"].append(True))
+    worker.left.connect(lambda: ev["left"].append(True))
+    worker.failed.connect(ev["failed"].append)
+    return worker, ev
+
+
+def test_remote_enter_switches_mode_then_starts_the_live(qapp):
+    client = _RemoteClient()
+    worker, ev = _remote(client)
+    worker.enter("1024x0768", 40123)
+    assert client.calls[:2] == [("enter_rec_mode", "1024x0768"), ("start_liveview", 40123)]
+    assert ev["entered"] == [("S", (96, 72, 448, 336))]
+
+
+def test_remote_enter_failure_is_reported_not_raised(qapp):
+    client = _RemoteClient(fail={"start_liveview": CameraNotReachable("x")})
+    worker, ev = _remote(client)
+    worker.enter("1024x0768", 1)
+    assert ev["entered"] == [] and ev["failed"]
+
+
+def test_remote_enter_survives_unreadable_dial_and_area(qapp):
+    client = _RemoteClient(fail={"take_mode": ProtocolError("x"), "touch_area": ProtocolError("x")})
+    worker, ev = _remote(client)
+    worker.enter("1024x0768", 1)
+    assert ev["entered"] == [("", None)]
+
+
+def test_remote_focus_and_shoot(qapp):
+    client = _RemoteClient()
+    worker, ev = _remote(client)
+    worker.focus(320, 240)
+    worker.shoot()
+    assert ("assign_af", 320, 240) in client.calls
+    assert ev["focused"] == [True] and ev["shot"] == [b"\xff\xd8rev"]
+
+
+def test_remote_shot_without_review_emits_empty(qapp):
+    client = _RemoteClient(fail={"rec_view": ProtocolError("x")})
+    worker, ev = _remote(client)
+    worker.shoot()
+    assert ev["shot"] == [b""] and ev["failed"] == []
+
+
+def test_remote_refused_shot_is_a_failure(qapp):
+    client = _RemoteClient(fail={"take_picture": ProtocolError("x", code=1004)})
+    worker, ev = _remote(client)
+    worker.shoot()
+    assert ev["shot"] == [] and "live" in ev["failed"][0]
+
+
+def test_remote_movie_start_and_stop(qapp):
+    client = _RemoteClient()
+    worker, ev = _remote(client)
+    worker.start_movie()
+    assert worker.is_recording() and ev["started"] == [True]
+    worker.stop_movie()
+    assert not worker.is_recording() and ev["stopped"] == [True]
+
+
+def test_remote_leave_stops_a_recording_first_and_always_ends_in_play(qapp):
+    client = _RemoteClient(fail={"stop_liveview": CameraNotReachable("x")})
+    worker, ev = _remote(client)
+    worker.start_movie()
+    worker.leave()
+    nomi = [c[0] for c in client.calls]
+    assert nomi[-3:] == ["stop_movie", "stop_liveview", "ensure_play_mode"]
+    assert ev["left"] == [True]
+
+
+def test_remote_leave_emits_left_even_if_everything_fails(qapp):
+    client = _RemoteClient(fail={n: CameraNotReachable("x") for n in
+                                 ("stop_movie", "stop_liveview", "ensure_play_mode")})
+    worker, ev = _remote(client)
+    worker.leave()
+    assert ev["left"] == [True]
+
+
+def test_remote_client_without_commands_connects_first(qapp):
+    client = _RemoteClient()
+    client.commands = set()
+    client.connect = lambda: client.calls.append(("connect",)) or "E-M10MarkIV"
+    worker, _ev = _remote(client)
+    worker.enter("1024x0768", 1)
+    assert client.calls[0] == ("connect",)

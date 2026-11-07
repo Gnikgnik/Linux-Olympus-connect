@@ -17,6 +17,7 @@ from ..core.errors import (
     CameraAsleep, CameraNotReachable, IncompleteDownload, NetworkUnavailable,
     ProtocolError, WrongNetwork,
 )
+from ..core.protocol import LIVE_QUALITY
 
 
 def describe_error(exc: Exception) -> str:
@@ -269,3 +270,107 @@ class DownloadWorker(QObject):
             self.file_done.emit(job.media.name)
 
         self.finished.emit()
+
+
+class RemoteWorker(QObject):
+    """I comandi del telecomando, uno alla volta, su un thread proprio.
+
+    Separato dal live: un comando che aspetta la fotocamera (uno stop del
+    video dura più di un secondo e mezzo) non deve fermare l'immagine.
+    Client proprio, come ogni worker: requests.Session non è thread-safe.
+    """
+
+    entered = pyqtSignal(str, object)     # modalità della ghiera, area di messa a fuoco | None
+    focused = pyqtSignal(object)          # True / False / None
+    shot = pyqtSignal(bytes)              # revisione; b"" se non arriva
+    movie_started = pyqtSignal()
+    movie_stopped = pyqtSignal()
+    left = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, client, quality: str = LIVE_QUALITY) -> None:
+        super().__init__()
+        self._client = client
+        self._quality = quality
+        self._recording = False
+
+    def is_recording(self) -> bool:
+        return self._recording
+
+    @pyqtSlot(str, int)
+    def enter(self, quality: str, port: int) -> None:
+        try:
+            if not getattr(self._client, "commands", None):
+                self._client.connect()
+            self._client.enter_rec_mode(quality or self._quality)
+            self._client.start_liveview(port)
+        except Exception as exc:
+            self.failed.emit(describe_error(exc))
+            return
+        modo, area = "", None
+        try:
+            modo = self._client.take_mode()
+        except Exception:
+            pass
+        try:
+            area = self._client.touch_area()
+        except Exception:
+            pass
+        self.entered.emit(modo, area)
+
+    @pyqtSlot(int, int)
+    def focus(self, x: int, y: int) -> None:
+        try:
+            self.focused.emit(self._client.assign_af(x, y))
+        except Exception as exc:
+            self.failed.emit(describe_error(exc))
+
+    @pyqtSlot()
+    def shoot(self) -> None:
+        try:
+            self._client.take_picture()
+        except Exception as exc:
+            self.failed.emit(describe_error(exc))
+            return
+        try:
+            revisione = self._client.rec_view()
+        except Exception:
+            revisione = b""            # lo scatto c'è; manca solo l'immagine da mostrare
+        self.shot.emit(revisione)
+
+    @pyqtSlot()
+    def start_movie(self) -> None:
+        try:
+            self._client.start_movie()
+        except Exception as exc:
+            self.failed.emit(describe_error(exc))
+            return
+        self._recording = True
+        self.movie_started.emit()
+
+    @pyqtSlot()
+    def stop_movie(self) -> None:
+        try:
+            self._client.stop_movie()
+        except Exception as exc:
+            self.failed.emit(describe_error(exc))
+            return
+        self._recording = False
+        self.movie_stopped.emit()
+
+    @pyqtSlot()
+    def leave(self) -> None:
+        """Ogni passo è tentato anche se il precedente fallisce: la
+        fotocamera deve tornare in riproduzione in ogni caso."""
+        if self._recording:
+            try:
+                self._client.stop_movie()
+            except Exception:
+                pass
+            self._recording = False
+        for passo in (self._client.stop_liveview, self._client.ensure_play_mode):
+            try:
+                passo()
+            except Exception:
+                pass
+        self.left.emit()
