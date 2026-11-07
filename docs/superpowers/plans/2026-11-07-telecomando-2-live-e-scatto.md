@@ -146,16 +146,26 @@ def packets_from_fixture(name: str, jpeg_for=synthetic_jpeg) -> tuple[list[bytes
     teste = [bytes.fromhex(r["intestazione"]) for r in righe]
     pacchetti: list[bytes] = [t + b"\x00" * r["payload_len"] for t, r in zip(teste, righe)]
     attesi: list[bytes] = []
+
+    def inizia(k):
+        return (teste[k][0] >> 4) & 1
+
     i = 0
     while i < len(righe):
-        if not (teste[i][0] >> 4) & 1:
+        if not inizia(i):
             i += 1
             continue
         j = i
-        while j < len(righe) and not teste[j][1] >> 7:
+        # Il fotogramma finisce al marcatore; ma se prima del marcatore
+        # comincia un fotogramma nuovo, quello in corso è stato
+        # abbandonato dalla fotocamera (succede a 1024 e 1280).
+        while j < len(righe) and not teste[j][1] >> 7 and (j == i or not inizia(j)):
             j += 1
         if j == len(righe):
             break                                   # fotogramma troncato a fine cattura
+        if j > i and inizia(j):
+            i = j                                   # abbandonato: resta a zeri
+            continue
         totale = sum(righe[k]["payload_len"] for k in range(i, j + 1))
         jpeg = jpeg_for(totale)
         pos = 0
@@ -179,7 +189,7 @@ import struct
 
 import pytest
 
-from live_helpers import (
+from tests.live_helpers import (
     FIXTURES, frame_packets, packets_from_fixture, rtp_header, synthetic_jpeg,
 )
 from olympus_connect.core.liveview import FrameAssembler, parse_rtp
@@ -835,7 +845,7 @@ import pytest
 from PyQt6.QtCore import QBuffer, QByteArray, QThread
 from PyQt6.QtGui import QImage
 
-from live_helpers import frame_packets, padded_jpeg
+from tests.live_helpers import frame_packets, padded_jpeg
 from olympus_connect.gui.liveview import LiveViewWorker
 
 
@@ -2684,7 +2694,7 @@ import pytest
 from PyQt6.QtCore import QBuffer, QByteArray, QSettings
 from PyQt6.QtGui import QImage
 
-from live_helpers import frame_packets, padded_jpeg
+from tests.live_helpers import frame_packets, padded_jpeg
 from olympus_connect.core.network import Diagnosis, Rung
 from olympus_connect.core.protocol import OlympusClient
 from olympus_connect.gui.liveview import LiveViewWorker
