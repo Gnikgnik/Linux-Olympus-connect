@@ -344,3 +344,18 @@ Fatto. Risposte e pacchetti in diag-downloads/telecomando/.
 - **Log di blocco di ufw:** la porta di origine dei pacchetti della fotocamera è la porta di ricezione con i due byte scambiati: destinazione 40000 → origine 16540; 35199 → 32649; 40234 → 10909. La porta 16540 funzionava solo perché la sonda ascoltava sempre su 40000.
 - **Messa a fuoco:** `touchactiveframe` a 1024×768 = `0153-0115_0716x0537` (coordinate scalate, quindi quelle della messa a fuoco seguono la dimensione del live).
 - **Correzione:** il datagramma di apertura va a 192.168.0.10, porta = byte-swap della porta di ricezione (`camera_source_port`).
+
+## Telecomando con l'app (2026-11-07), prova completa
+
+Dopo la correzione della porta del datagramma di apertura (commit `033cbe9`), sessione completa con l'app, avviata con `OLYMPUS_DEBUG=1`, **senza alcuna regola del firewall**:
+
+| Prova | Esito |
+|---|---|
+| Live | arriva a 1024×768, fluido |
+| Messa a fuoco col tocco | 8 clic, tutti `affocus ok`; il riquadro restituito (`afframepoint`, lato 115 a 1024×768) è centrato sul punto cliccato, per esempio clic (471, 416) → riquadro centrato in (469, 415): le coordinate sono quelle del live corrente, nessuna conversione necessaria; il riquadro a schermo diventa verde e il fuoco cade dove si clicca |
+| Scatto e revisione | `starttake` ok, revisione da `getrecview` (circa 290 KB) mostrata per 2 s, poi il live riprende |
+| Video | `startmovietake liveview=on` e `stopmovietake` ok; il live passa a 16:9 durante la registrazione e il tempo scorre |
+| Ritorno a Miniature | `stopliveview`, riproduzione, nuovo elenco: compaiono `PB081200.JPG`, `PB081200.ORF`, `PB081201.MOV` |
+| Chiusura dal live | non provata con la fotocamera (l'app è stata chiusa dall'elenco); coperta dai test |
+
+Esito dichiarato dall'utente: tutto funziona.
