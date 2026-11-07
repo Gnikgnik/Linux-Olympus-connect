@@ -44,11 +44,14 @@ def map_to_frame(pos: tuple[float, float], container: tuple[int, int],
         return None
     fx = (px - x0) * frame[0] / w
     fy = (py - y0) * frame[1] / h
+    lo_x, hi_x, lo_y, hi_y = 0, frame[0] - 1, 0, frame[1] - 1
     if area is not None:
         ax, ay, aw, ah = area
-        fx = min(max(fx, ax), ax + aw)
-        fy = min(max(fy, ay), ay + ah)
-    return int(round(fx)), int(round(fy))
+        nlx, nhx = max(lo_x, ax), min(hi_x, ax + aw - 1)
+        nly, nhy = max(lo_y, ay), min(hi_y, ay + ah - 1)
+        if nlx <= nhx and nly <= nhy:     # area vuota nel fotogramma: la si ignora
+            lo_x, hi_x, lo_y, hi_y = nlx, nhx, nly, nhy
+    return (min(max(int(fx), lo_x), hi_x), min(max(int(fy), lo_y), hi_y))
 
 
 class RemoteView(QWidget):

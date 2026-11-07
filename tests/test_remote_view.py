@@ -43,7 +43,15 @@ def test_map_to_frame_scales_with_the_frame():
 def test_map_to_frame_clamps_to_the_touch_area():
     area = (96, 72, 448, 336)
     assert map_to_frame((0, 0), (640, 480), (640, 480), area) == (96, 72)
-    assert map_to_frame((639, 479), (640, 480), (640, 480), area) == (544, 408)
+    assert map_to_frame((639, 479), (640, 480), (640, 480), area) == (543, 407)
+
+
+def test_map_to_frame_never_leaves_the_frame():
+    assert map_to_frame((639.7, 479.7), (640, 480), (640, 480), None) == (639, 479)
+
+
+def test_touch_area_is_cut_to_a_16_9_frame():
+    assert map_to_frame((639, 359), (640, 360), (640, 360), (96, 72, 448, 336)) == (543, 359)
 
 
 # --- RemoteView ------------------------------------------------------------------
