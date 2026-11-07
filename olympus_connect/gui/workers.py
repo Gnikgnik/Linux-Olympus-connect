@@ -35,6 +35,11 @@ def describe_error(exc: Exception) -> str:
         return f"Gestione della rete non disponibile. {exc}"
     if isinstance(exc, IncompleteDownload):
         return f"Trasferimento incompleto. {exc}"
+    if isinstance(exc, ProtocolError) and exc.code == 1004:
+        return ("La fotocamera non accetta il comando in questo momento: "
+                "funziona solo con il live attivo. Riprova.")
+    if isinstance(exc, ProtocolError) and exc.code is not None:
+        return f"La fotocamera ha rifiutato il comando (codice {exc.code})."
     if isinstance(exc, ProtocolError):
         return f"Risposta inattesa dalla fotocamera. {exc}"
     if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:

@@ -15,11 +15,17 @@ class CameraAsleep(OlympusError):
 
 
 class ProtocolError(OlympusError):
-    """Risposta inattesa dalla fotocamera."""
+    """Risposta inattesa dalla fotocamera.
 
-    def __init__(self, message: str, raw: bytes = b"") -> None:
+    `code` è l'`errorcode` che la fotocamera mette nel corpo di una
+    risposta HTTP 520, quando c'è: 1004, per esempio, è un comando di
+    scatto inviato con il live spento.
+    """
+
+    def __init__(self, message: str, raw: bytes = b"", code: int | None = None) -> None:
         super().__init__(message)
         self.raw = raw
+        self.code = code
 
 
 class IncompleteDownload(OlympusError):

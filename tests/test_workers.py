@@ -567,3 +567,14 @@ def test_no_shot_data_while_suspended(qapp):
     worker.request("/DCIM/100OLYMP/A.ORF")
     assert client.ordine == []
     assert dati == []
+
+
+# --- codici d'errore della fotocamera ------------------------------------------
+
+def test_describe_error_explains_code_1004():
+    testo = describe_error(ProtocolError("x", code=1004))
+    assert "live" in testo and "riprova" in testo.lower()
+
+
+def test_describe_error_shows_other_codes():
+    assert "1005" in describe_error(ProtocolError("x", code=1005))

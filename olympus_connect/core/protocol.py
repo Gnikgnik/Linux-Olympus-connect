@@ -7,6 +7,7 @@ quindi senza conoscere gli endpoint CGI non c'è modo di arrivare ai file.
 """
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ElementTree
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,6 +26,12 @@ HEADERS = {
 }
 
 TIMEOUT = (3, 15)   # (connect, read) in secondi
+
+# Misurato sul campo: 30 fotogrammi al secondo a 640×480 e a 1024×768,
+# circa 15 a 1280×960. La più alta che resta fluida.
+LIVE_QUALITY = "1024x0768"
+
+_ERRORCODE = re.compile(rb"<errorcode>\s*(\d+)\s*</errorcode>")
 
 
 @dataclass
@@ -78,8 +85,12 @@ class OlympusClient:
     def _get_ok(self, path: str, **params) -> requests.Response:
         response = self._get(path, **params)
         if response.status_code != 200:
+            trovato = _ERRORCODE.search(response.content or b"")
+            codice = int(trovato.group(1)) if trovato else None
+            dettaglio = f", codice {codice}." if codice is not None else "."
             raise ProtocolError(
-                f"{path} ha risposto HTTP {response.status_code}.", response.content
+                f"{path} ha risposto HTTP {response.status_code}{dettaglio}",
+                response.content, code=codice,
             )
         return response
 
@@ -198,6 +209,79 @@ class OlympusClient:
         """I dati di scatto grezzi di un file, da leggere con parse_exif."""
         return self._get_ok("get_exif.cgi", DIR=camera_path).content
 
+    # -- modalità scatto (telecomando) --------------------------------------
+
+    def enter_rec_mode(self, quality: str = LIVE_QUALITY) -> None:
+        """Modalità scatto con la qualità del live richiesta.
+
+        Verificato sul campo: un mode=rec mandato quando la fotocamera è già
+        in rec ignora lvqty. Per cambiare qualità si passa dalla riproduzione.
+        """
+        self._get_ok("switch_cammode.cgi", mode="play")
+        self._get_ok("switch_cammode.cgi", mode="rec", lvqty=quality)
+        self._mode = "rec"
+
+    def start_liveview(self, port: int) -> None:
+        self._get_ok("exec_takemisc.cgi", com="startliveview", port=port)
+
+    def stop_liveview(self) -> None:
+        self._get_ok("exec_takemisc.cgi", com="stopliveview")
+
+    def take_mode(self) -> str:
+        """La modalità della ghiera: P, A, S, M, iAuto…"""
+        root = self._xml(self._get_ok("get_camprop.cgi", com="get", propname="takemode"))
+        return (root.findtext("value") or "").strip()
+
+    def touch_area(self) -> tuple[int, int, int, int] | None:
+        """L'area del live in cui la messa a fuoco col tocco è accettata:
+        (x, y, larghezza, altezza). La fotocamera la descrive come
+        «0096-0072_0448x0336» nella voce touchactiveframe di desclist."""
+        root = self._xml(self._get_ok("get_camprop.cgi", com="desc", propname="desclist"))
+        for desc in root.iter("desc"):
+            if (desc.findtext("propname") or "").strip() != "touchactiveframe":
+                continue
+            trovato = re.fullmatch(r"\s*(\d+)-(\d+)_(\d+)x(\d+)\s*", desc.findtext("value") or "")
+            if trovato:
+                x, y, w, h = (int(g) for g in trovato.groups())
+                return x, y, w, h
+        return None
+
+    def assign_af(self, x: int, y: int) -> bool | None:
+        """Mette a fuoco nel punto (x, y) del live. Solo con il live acceso.
+
+        True a fuoco, False messa a fuoco fallita, None se la risposta non
+        dice l'esito."""
+        response = self._get_ok("exec_takemotion.cgi", com="assignafframe",
+                                point=f"{x:04d}x{y:04d}")
+        return _focus_result(response.content)
+
+    def release_af(self) -> None:
+        self._get_ok("exec_takemotion.cgi", com="releaseafframe")
+
+    def take_picture(self) -> None:
+        """Scatta. Solo con il live acceso. stoptake segue sempre starttake,
+        anche quando la fotocamera dice che lo scatto non è riuscito."""
+        response = self._get_ok("exec_takemotion.cgi", com="starttake")
+        self._get_ok("exec_takemotion.cgi", com="stoptake")
+        esito = _xml_text(response.content, "take")
+        if esito is not None and esito != "ok":
+            raise ProtocolError("La fotocamera non ha scattato.", response.content)
+
+    def start_movie(self) -> None:
+        """Inizia un video lasciando acceso il live (che passa a 16:9)."""
+        self._get_ok("exec_takemotion.cgi", com="startmovietake", liveview="on")
+
+    def stop_movie(self) -> None:
+        self._get_ok("exec_takemotion.cgi", com="stopmovietake")
+
+    def rec_view(self) -> bytes:
+        """L'immagine di revisione dell'ultimo scatto: circa 40-50 KB in 45 ms
+        con il live acceso. Con il live spento la fotocamera non risponde."""
+        response = self._get_ok("exec_takemisc.cgi", com="getrecview")
+        if response.content[:2] != b"\xff\xd8":
+            raise ProtocolError("Immagine di revisione non valida.", response.content)
+        return response.content
+
     # -- download ---------------------------------------------------------
 
     @contextmanager
@@ -233,3 +317,17 @@ class OlympusClient:
                          chunks=response.iter_content(CHUNK_SIZE))
         finally:
             response.close()
+
+
+def _xml_text(body: bytes, tag: str) -> str | None:
+    try:
+        root = ElementTree.fromstring(body)
+    except ElementTree.ParseError:
+        return None
+    nodo = root if root.tag == tag else root.find(f".//{tag}")
+    return nodo.text.strip() if nodo is not None and nodo.text else None
+
+
+def _focus_result(body: bytes) -> bool | None:
+    esito = _xml_text(body, "affocus")
+    return None if esito is None else esito == "ok"

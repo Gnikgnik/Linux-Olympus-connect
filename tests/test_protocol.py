@@ -284,3 +284,115 @@ def test_list_media_parses_real_camera_fixtures(requests_mock, fixture_bytes):
     assert kinds[MediaKind.RAW] == 1141
     assert kinds[MediaKind.MOVIE] == 18
     assert kinds[MediaKind.JPEG] == 2
+
+
+# --- modalità scatto ---------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from olympus_connect.core.protocol import LIVE_QUALITY  # noqa: E402
+
+REMOTE = Path(__file__).parent / "fixtures" / "remote"
+
+
+def test_error_code_is_read_from_the_camera_response(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", status_code=520,
+                      content=b'<?xml version="1.0"?><errorcode>1004</errorcode>')
+    with pytest.raises(ProtocolError) as info:
+        OlympusClient().take_picture()
+    assert info.value.code == 1004
+
+
+def test_an_error_without_code_keeps_code_none(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_thumbnail.cgi", status_code=404)
+    with pytest.raises(ProtocolError) as info:
+        OlympusClient().thumbnail("/DCIM/100OLYMP/A.JPG")
+    assert info.value.code is None
+
+
+def test_enter_rec_mode_goes_through_play_to_change_quality(requests_mock):
+    requests_mock.get(f"{BASE_URL}/switch_cammode.cgi", content=b"")
+    client = OlympusClient()
+    client.enter_rec_mode()
+    assert [r.qs for r in requests_mock.request_history] == [
+        {"mode": ["play"]}, {"mode": ["rec"], "lvqty": [LIVE_QUALITY]}]
+
+
+def test_after_rec_mode_play_mode_is_requested_again(requests_mock):
+    requests_mock.get(f"{BASE_URL}/switch_cammode.cgi", content=b"")
+    client = OlympusClient()
+    client.ensure_play_mode()
+    client.enter_rec_mode()
+    client.ensure_play_mode()
+    assert requests_mock.request_history[-1].qs == {"mode": ["play"]}
+
+
+def test_live_view_start_and_stop(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemisc.cgi", content=b"<funcidlist/>")
+    client = OlympusClient()
+    client.start_liveview(40123)
+    client.stop_liveview()
+    assert [r.qs for r in requests_mock.request_history] == [
+        {"com": ["startliveview"], "port": ["40123"]}, {"com": ["stopliveview"]}]
+
+
+def test_take_mode_reads_the_dial(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_camprop.cgi",
+                      content=(REMOTE / "camprop_takemode.xml").read_bytes())
+    assert OlympusClient().take_mode() == "S"
+
+
+def test_touch_area_comes_from_the_real_desclist(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_camprop.cgi",
+                      content=(REMOTE / "camprop_desclist.xml").read_bytes())
+    assert OlympusClient().touch_area() == (96, 72, 448, 336)
+    assert requests_mock.last_request.qs == {"com": ["desc"], "propname": ["desclist"]}
+
+
+def test_touch_area_missing_is_none(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_camprop.cgi",
+                      content=b'<?xml version="1.0"?><desclist></desclist>')
+    assert OlympusClient().touch_area() is None
+
+
+@pytest.mark.parametrize("corpo,esito", [
+    ((REMOTE / "af.txt").read_bytes(), True),
+    (b"<response><affocus>ng</affocus></response>", False),
+    (b"", None),
+])
+def test_assign_af_reports_the_focus_result(requests_mock, corpo, esito):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", content=corpo)
+    assert OlympusClient().assign_af(320, 240) is esito
+    assert requests_mock.last_request.qs == {"com": ["assignafframe"], "point": ["0320x0240"]}
+
+
+def test_take_picture_sends_start_then_stop(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi",
+                      content=b"<response><take>ok</take></response>")
+    OlympusClient().take_picture()
+    assert [r.qs["com"] for r in requests_mock.request_history] == [["starttake"], ["stoptake"]]
+
+
+def test_a_refused_take_still_sends_stop_and_raises(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi",
+                      content=b"<response><take>ng</take></response>")
+    with pytest.raises(ProtocolError):
+        OlympusClient().take_picture()
+    assert [r.qs["com"] for r in requests_mock.request_history] == [["starttake"], ["stoptake"]]
+
+
+def test_movie_start_keeps_the_live_on(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", content=b"")
+    client = OlympusClient()
+    client.start_movie()
+    client.stop_movie()
+    assert [r.qs for r in requests_mock.request_history] == [
+        {"com": ["startmovietake"], "liveview": ["on"]}, {"com": ["stopmovietake"]}]
+
+
+def test_rec_view_returns_a_jpeg_or_raises(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemisc.cgi", content=b"\xff\xd8revisione")
+    assert OlympusClient().rec_view() == b"\xff\xd8revisione"
+    requests_mock.get(f"{BASE_URL}/exec_takemisc.cgi", content=b"<x/>")
+    with pytest.raises(ProtocolError):
+        OlympusClient().rec_view()
