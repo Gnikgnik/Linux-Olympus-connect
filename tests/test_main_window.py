@@ -656,3 +656,192 @@ def test_shot_and_details_values_start_at_the_same_x(windows, qapp, settings, tm
     x_dettaglio = dettaglio.mapTo(win, dettaglio.rect().topLeft()).x()
     x_scatto = riga.mapTo(win, riga.rect().topLeft()).x()
     assert x_dettaglio == x_scatto
+
+
+# --- telecomando ---------------------------------------------------------------------
+
+from PyQt6.QtCore import QObject, pyqtSignal  # noqa: E402
+from PyQt6.QtGui import QImage  # noqa: E402
+
+
+class _RemoteStubClient(_RecordingClient):
+    """Client finto con i comandi della modalità scatto; registra tutto a
+    livello di classe, perché ogni worker ne crea uno."""
+
+    def enter_rec_mode(self, quality):
+        _RecordingClient.chiamate.append(("enter_rec_mode", quality))
+
+    def start_liveview(self, port):
+        _RecordingClient.chiamate.append(("start_liveview", port))
+
+    def stop_liveview(self):
+        _RecordingClient.chiamate.append(("stop_liveview",))
+
+    def take_mode(self):
+        return "S"
+
+    def touch_area(self):
+        return (96, 72, 448, 336)
+
+    def assign_af(self, x, y):
+        _RecordingClient.chiamate.append(("assign_af", x, y))
+        return True
+
+    def take_picture(self):
+        _RecordingClient.chiamate.append(("take_picture",))
+
+    def rec_view(self):
+        # Bytes preparati sul thread della GUI: QPixmap non si crea su un altro thread.
+        _RecordingClient.chiamate.append(("rec_view",))
+        return _RemoteStubClient.revisione
+
+    def start_movie(self):
+        _RecordingClient.chiamate.append(("start_movie",))
+
+    def stop_movie(self):
+        _RecordingClient.chiamate.append(("stop_movie",))
+
+    def ensure_play_mode(self):
+        _RecordingClient.chiamate.append(("ensure_play_mode",))
+
+
+class _FakeLive(QObject):
+    listening = pyqtSignal(int)
+    frame_ready = pyqtSignal()
+    stalled = pyqtSignal()
+    no_signal = pyqtSignal()
+    resumed = pyqtSignal()
+    istanze: list = []
+
+    def __init__(self):
+        super().__init__()
+        self.armato = 0
+        self.fermato = False
+        self.immagine = None
+        _FakeLive.istanze.append(self)
+
+    def run(self):
+        self.listening.emit(5555)
+
+    def arm(self):
+        self.armato += 1
+
+    def disarm(self):
+        pass
+
+    def take_frame(self):
+        immagine, self.immagine = self.immagine, None
+        return immagine
+
+    def stop(self):
+        self.fermato = True
+
+
+def _telecomando(settings):
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    _RemoteStubClient.revisione = _jpeg_valido()
+    win = MainWindow(client_factory=_RemoteStubClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive)
+    win.resize(1200, 700)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    return win
+
+
+@pytest.fixture
+def remote_win(qapp, settings):
+    win = _telecomando(settings)
+    yield win
+    win.close()
+
+
+def test_remote_button_needs_a_connected_camera(windows, qapp, settings):
+    win = windows(settings)
+    assert not win._view_remote.isEnabled()
+    win.on_connected("E-M10MarkIV")
+    assert win._view_remote.isEnabled()
+    win._downloading = True
+    win._update_remote_button()
+    assert not win._view_remote.isEnabled()
+
+
+def test_entering_suspends_the_library_and_starts_the_session(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert win._remote_active and win._suspended
+    assert win._views.currentWidget() is win._remote_view
+    assert win._inspector_pages.currentWidget() is win._remote_panel
+    assert not win._download_button.isEnabled()
+    assert not any(b.isEnabled() for b in win._filter_boxes.values())
+    assert _attendi(qapp, lambda: ("start_liveview", 5555) in _RecordingClient.chiamate)
+    assert ("enter_rec_mode", "1024x0768") in _RecordingClient.chiamate
+    assert _FakeLive.istanze[-1].armato == 1, "il datagramma va mandato prima di startliveview"
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+
+
+def test_a_frame_reaches_the_view(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: _FakeLive.istanze)
+    live = _FakeLive.istanze[-1]
+    live.immagine = QImage(64, 48, QImage.Format.Format_RGB32)
+    live.frame_ready.emit()
+    assert _attendi(qapp, win._remote_view.has_frame)
+
+
+def test_shoot_shows_the_review(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win._remote_panel._shoot.click()
+    assert _attendi(qapp, win._remote_view.is_reviewing)
+    assert ("take_picture",) in _RecordingClient.chiamate
+
+
+def test_click_on_the_live_asks_for_focus(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win._remote_view.focus_requested.emit(320, 240)
+    assert _attendi(qapp, lambda: ("assign_af", 320, 240) in _RecordingClient.chiamate)
+
+
+def test_leaving_stops_the_video_returns_to_play_and_relists(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win._remote_panel._movie.click()
+    assert _attendi(qapp, win._remote_panel.is_recording)
+    win._view_grid.click()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    nomi = [c[0] for c in _RecordingClient.chiamate]
+    assert nomi.index("stop_movie") < nomi.index("stop_liveview") < nomi.index("ensure_play_mode")
+    assert _FakeLive.istanze[-1].fermato
+    assert win._views.currentWidget() is not win._remote_view
+    assert win._inspector_pages.currentIndex() == 0
+    assert not win._suspended
+    assert win._list_worker is not None, "uscendo si rifà l'elenco con un client nuovo"
+
+
+def test_shortcuts_exist_only_in_remote_mode(remote_win, qapp):
+    win = remote_win
+    assert win._shortcut_shoot.key().toString() == "Space"
+    assert win._shortcut_movie.key().toString() == "R"
+    assert not win._shortcut_shoot.isEnabled()
+    win._view_remote.click()
+    assert win._shortcut_shoot.isEnabled() and win._shortcut_movie.isEnabled()
+
+
+def test_remote_is_not_remembered_as_startup_view(remote_win, qapp, settings):
+    remote_win._view_remote.click()
+    assert settings.value("view") != "telecomando"
+
+
+def test_closing_in_remote_mode_returns_the_camera_to_play(qapp, settings):
+    win = _telecomando(settings)
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win.close()
+    assert ("ensure_play_mode",) in _RecordingClient.chiamate

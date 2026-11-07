@@ -10,8 +10,10 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, QSize, Qt, QThread, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import (
+    QEventLoop, QSettings, QSize, Qt, QThread, QTimer, pyqtSignal, pyqtSlot,
+)
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
@@ -22,15 +24,18 @@ from ..core.downloader import JobState
 from ..core.errors import NetworkUnavailable, OlympusError
 from ..core.model import MediaKind
 from ..core.network import CameraNetwork
-from ..core.protocol import OlympusClient
+from ..core.protocol import LIVE_QUALITY, OlympusClient
 from ..core.stats import format_duration, format_rate, format_size
 from . import icons, theme
 from .grid import MediaFilter, MediaGrid, MediaListModel, MediaTable
 from .panels import CollapsiblePanel, SectionLabel, Separator
+from .liveview import LiveViewWorker
 from .preview import PreviewView
+from .remote import RemotePanel, RemoteView
 from .shot import ShotSection, label_column_width
 from .workers import (
-    DownloadWorker, ListWorker, PreviewWorker, ThumbWorker, describe_error,
+    DownloadWorker, ListWorker, PreviewWorker, RemoteWorker, ThumbWorker,
+    describe_error,
 )
 
 DEFAULT_DEST = Path.home() / "Immagini" / "Olympus"
@@ -38,6 +43,9 @@ DEFAULT_DEST = Path.home() / "Immagini" / "Olympus"
 VIEW_GRID = "griglia"
 VIEW_TABLE = "elenco"
 VIEW_LABELS = {VIEW_GRID: "Miniature", VIEW_TABLE: "Elenco dettagliato"}
+# Il telecomando non è una vista dell'elenco: non si ricorda come vista
+# d'avvio, perché all'avvio la fotocamera non è collegata.
+VIEW_REMOTE = "telecomando"
 
 KIND_ROWS = (
     (MediaKind.JPEG, "jpeg", "JPEG"),
@@ -57,10 +65,18 @@ class MainWindow(QMainWindow):
     # diretta: il worker vive su un altro thread, e chiamarne un metodo
     # dalla GUI eseguirebbe la richiesta HTTP sul thread sbagliato.
     preview_needed = pyqtSignal(str)
+    # Comandi verso il RemoteWorker, che vive su un altro thread.
+    remote_enter = pyqtSignal(str, int)
+    remote_focus = pyqtSignal(int, int)
+    remote_shoot = pyqtSignal()
+    remote_movie_start = pyqtSignal()
+    remote_movie_stop = pyqtSignal()
+    remote_leave = pyqtSignal()
 
     def __init__(self, client_factory=OlympusClient,
                  network_factory=CameraNetwork,
-                 settings: QSettings | None = None) -> None:
+                 settings: QSettings | None = None,
+                 live_factory=LiveViewWorker) -> None:
         super().__init__()
         self.setWindowTitle("Olympus Connect")
         self.resize(1180, 720)
@@ -77,6 +93,16 @@ class MainWindow(QMainWindow):
         self._preview_path: str | None = None
         self._connected_model: str = ""
         self._suspended = False
+        self._live_factory = live_factory
+        self._remote_active = False
+        self._remote_leaving = False
+        self._remote_worker: RemoteWorker | None = None
+        self._live_worker = None
+        self._remote_threads: list[QThread] = []
+        self._remote_exit_view = VIEW_GRID
+        self._live_port = 0
+        self._downloading = False
+        self._closing = False
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
@@ -107,8 +133,21 @@ class MainWindow(QMainWindow):
         self._install_transfer_widgets()
 
         self.set_view(str(self._settings.value("view", VIEW_GRID)))
-        self._view_grid.clicked.connect(lambda: self.set_view(VIEW_GRID))
-        self._view_table.clicked.connect(lambda: self.set_view(VIEW_TABLE))
+        self._view_grid.clicked.connect(lambda: self.choose_view(VIEW_GRID))
+        self._view_table.clicked.connect(lambda: self.choose_view(VIEW_TABLE))
+        self._view_remote.clicked.connect(self.enter_remote)
+
+        self._remote_view.focus_requested.connect(self.on_remote_focus_requested)
+        self._remote_view.retry_requested.connect(self.on_live_retry)
+        self._remote_panel.shoot_requested.connect(self.on_remote_shoot)
+        self._remote_panel.movie_toggle_requested.connect(self.on_remote_movie_toggle)
+
+        self._shortcut_shoot = QShortcut(QKeySequence("Space"), self)
+        self._shortcut_shoot.activated.connect(self.on_remote_shoot)
+        self._shortcut_movie = QShortcut(QKeySequence("R"), self)
+        self._shortcut_movie.activated.connect(self.on_remote_movie_toggle)
+        for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
+            scorciatoia.setEnabled(False)
         for pulsante in self._filter_boxes.values():
             pulsante.toggled.connect(self.on_filter_changed)
         self.on_filter_changed()
@@ -258,6 +297,8 @@ class MainWindow(QMainWindow):
         self._views.addWidget(self._grid)
         self._views.addWidget(self._table)
         self._views.addWidget(self._build_empty_state())
+        self._remote_view = RemoteView()
+        self._views.addWidget(self._remote_view)
         colonna.addWidget(self._views, 1)
         return contenitore
 
@@ -283,6 +324,14 @@ class MainWindow(QMainWindow):
         self._view_table.setToolTip("Elenco dettagliato")
         riga.addWidget(self._view_grid)
         riga.addWidget(self._view_table)
+        self._view_remote = QPushButton()
+        self._view_remote.setObjectName("ghost")
+        self._view_remote.setCheckable(True)
+        self._view_remote.setIcon(icons.icon("remote", theme.TEXT_DIM, size=18))
+        self._view_remote.setIconSize(QSize(18, 18))
+        self._view_remote.setToolTip("Telecomando: live, scatto e video")
+        self._view_remote.setEnabled(False)
+        riga.addWidget(self._view_remote)
 
         riga.addSpacing(10)
         self._selection_label = _label("", "dim")
@@ -383,7 +432,16 @@ class MainWindow(QMainWindow):
 
     def _build_inspector(self) -> CollapsiblePanel:
         pannello = CollapsiblePanel("Anteprima", "right", theme.PANEL_WIDTH)
-        corpo = pannello.layout_body()
+        esterno = pannello.layout_body()
+        self._inspector_pages = QStackedWidget()
+        pagina = QWidget()
+        corpo = QVBoxLayout(pagina)
+        corpo.setContentsMargins(0, 0, 0, 0)
+        corpo.setSpacing(10)      # come layout_body() di panels.py
+        self._inspector_pages.addWidget(pagina)
+        self._remote_panel = RemotePanel()
+        self._inspector_pages.addWidget(self._remote_panel)
+        esterno.addWidget(self._inspector_pages)
 
         self._preview = PreviewView()
         corpo.addWidget(self._preview)
@@ -551,9 +609,12 @@ class MainWindow(QMainWindow):
         self._connected_model = model
         self.statusBar().showMessage(f"Connesso a Olympus {model}.")
         self._set_camera_state(f"Olympus {model}", "Collegata", True)
+        self._update_remote_button()
 
     @pyqtSlot(list)
     def on_listed(self, jobs: list) -> None:
+        if self._closing:
+            return          # un elenco in coda dopo la chiusura non deve avviare thread
         self._model.set_jobs(jobs)
         # I worker prima di tutto il resto: on_filter_changed passa da
         # set_view, che chiede le miniature visibili. Se il collegamento al
@@ -659,6 +720,9 @@ class MainWindow(QMainWindow):
             self.preview_needed.emit(self._preview_path)
 
     def _update_selection_label(self) -> None:
+        if self._remote_active:
+            self._download_button.setEnabled(False)
+            return
         jobs = self.selected_jobs()
         if not jobs:
             visibili = self._model.rowCount()
@@ -740,6 +804,7 @@ class MainWindow(QMainWindow):
                 self._table if view == VIEW_TABLE else self._grid)
         self._view_grid.setChecked(view == VIEW_GRID)
         self._view_table.setChecked(view == VIEW_TABLE)
+        self._view_remote.setChecked(False)
         self._settings.setValue("view", view)
         self._requested_view = view
         if view == VIEW_GRID and not vuoto:
@@ -794,6 +859,8 @@ class MainWindow(QMainWindow):
 
         self._download_worker = worker
         self._show_transfer(True)
+        self._downloading = True
+        self._update_remote_button()
         self._start_on_thread(worker, worker.run)
 
     @pyqtSlot(str)
@@ -836,6 +903,8 @@ class MainWindow(QMainWindow):
         self._cancel_button.setEnabled(False)
         self._suspend_thumbnails(False)
         self._file_label.setText("Trasferimento annullato")
+        self._downloading = False
+        self._update_remote_button()
 
     def on_resume(self) -> None:
         if self._download_worker is None:
@@ -843,6 +912,8 @@ class MainWindow(QMainWindow):
         self._show_transfer(True)
         self._suspend_thumbnails(True)
         self._download_worker.resume()
+        self._downloading = True
+        self._update_remote_button()
 
     @pyqtSlot(str)
     def on_paused(self, message: str) -> None:
@@ -851,6 +922,8 @@ class MainWindow(QMainWindow):
         self._cancel_button.setEnabled(False)
         self._file_label.setText("In pausa: la fotocamera si è disconnessa")
         self._suspend_thumbnails(False)
+        self._downloading = False
+        self._update_remote_button()
 
     @pyqtSlot()
     def on_download_finished(self) -> None:
@@ -861,7 +934,234 @@ class MainWindow(QMainWindow):
         self._show_transfer(False)
         self._suspend_thumbnails(False)
         self.statusBar().showMessage("Download completato.")
+        self._downloading = False
+        self._update_remote_button()
         self.on_refresh()
+
+    # ------------------------------------------------------------------
+    # telecomando
+    # ------------------------------------------------------------------
+
+    def _update_remote_button(self) -> None:
+        self._view_remote.setEnabled(
+            self._remote_active or (bool(self._connected_model) and not self._downloading))
+
+    def _set_library_controls(self, enabled: bool) -> None:
+        for pulsante in self._filter_boxes.values():
+            pulsante.setEnabled(enabled)
+        if enabled:
+            self._update_selection_label()
+        else:
+            self._download_button.setEnabled(False)
+
+    def choose_view(self, view: str) -> None:
+        if self._remote_active:
+            self.exit_remote(view)
+        else:
+            self.set_view(view)
+
+    def enter_remote(self) -> None:
+        if self._remote_active:
+            self._view_remote.setChecked(True)
+            return
+        if not self._connected_model or self._downloading:
+            self._view_remote.setChecked(False)
+            return
+        self._remote_active = True
+        self._remote_exit_view = self.current_view()
+        # Miniature e anteprima lavorano in riproduzione: in modalità scatto
+        # le loro richieste fallirebbero.
+        self._suspend_thumbnails(True)
+        self._set_library_controls(False)
+        self._view_grid.setChecked(False)
+        self._view_table.setChecked(False)
+        self._view_remote.setChecked(True)
+        self._views.setCurrentWidget(self._remote_view)
+        self._inspector_pages.setCurrentWidget(self._remote_panel)
+        self._inspector.set_title("Telecomando")
+        self._remote_view.clear()
+        self._remote_view.show_message("Collegamento al live…")
+        self._remote_panel.set_recording(False)
+        self._remote_panel.set_busy(True)
+        for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
+            scorciatoia.setEnabled(True)
+        self.statusBar().showMessage("Telecomando: passaggio in modalità scatto…")
+
+        remote = RemoteWorker(self._client_factory(), LIVE_QUALITY)
+        remote.entered.connect(self.on_remote_entered)
+        remote.focused.connect(self.on_remote_focused)
+        remote.shot.connect(self.on_remote_shot)
+        remote.movie_started.connect(self.on_remote_movie_started)
+        remote.movie_stopped.connect(self.on_remote_movie_stopped)
+        remote.left.connect(self.on_remote_left)
+        remote.failed.connect(self.on_remote_failed)
+        coda = Qt.ConnectionType.QueuedConnection
+        self.remote_enter.connect(remote.enter, coda)
+        self.remote_focus.connect(remote.focus, coda)
+        self.remote_shoot.connect(remote.shoot, coda)
+        self.remote_movie_start.connect(remote.start_movie, coda)
+        self.remote_movie_stop.connect(remote.stop_movie, coda)
+        self.remote_leave.connect(remote.leave, coda)
+
+        live = self._live_factory()
+        live.listening.connect(self.on_live_listening)
+        live.frame_ready.connect(self.on_live_frame)
+        live.stalled.connect(self.on_live_stalled)
+        live.no_signal.connect(self.on_live_no_signal)
+
+        self._remote_worker = remote
+        self._live_worker = live
+        self._remote_threads = [self._start_on_thread(remote),
+                                self._start_on_thread(live, live.run)]
+
+    @pyqtSlot(int)
+    def on_live_listening(self, port: int) -> None:
+        self._live_port = port
+        if self._live_worker is not None:
+            self._live_worker.arm()          # prima di startliveview: apre il passaggio
+        self.remote_enter.emit(LIVE_QUALITY, port)
+
+    @pyqtSlot(str, object)
+    def on_remote_entered(self, mode: str, area: object) -> None:
+        self._remote_panel.set_take_mode(mode)
+        self._remote_panel.set_busy(False)
+        self._remote_view.set_touch_area(area)
+        self.statusBar().showMessage("Telecomando attivo.")
+
+    @pyqtSlot()
+    def on_live_frame(self) -> None:
+        if self._live_worker is None:
+            return
+        immagine = self._live_worker.take_frame()
+        if immagine is not None:
+            self._remote_view.set_frame(immagine)
+
+    @pyqtSlot()
+    def on_live_stalled(self) -> None:
+        self._remote_view.show_message("Live interrotto.", retry=True)
+
+    @pyqtSlot()
+    def on_live_no_signal(self) -> None:
+        self._remote_view.show_message(
+            "Nessuna immagine dalla fotocamera. Se il firewall blocca il live, "
+            "consenti i pacchetti UDP da 192.168.0.10 (vedi il README).", retry=True)
+
+    def on_live_retry(self) -> None:
+        if not self._remote_active or self._live_worker is None:
+            return
+        self._remote_view.show_message("Collegamento al live…")
+        self._live_worker.arm()
+        self.remote_enter.emit(LIVE_QUALITY, self._live_port)
+
+    def on_remote_focus_requested(self, x: int, y: int) -> None:
+        if not self._remote_active or self._remote_panel.is_recording():
+            return
+        self._remote_view.show_af(x, y)
+        self.remote_focus.emit(x, y)
+
+    @pyqtSlot(object)
+    def on_remote_focused(self, result: object) -> None:
+        self._remote_view.set_af_result(result)
+
+    def on_remote_shoot(self) -> None:
+        if (not self._remote_active or self._remote_leaving
+                or not self._remote_panel._shoot.isEnabled()):
+            return
+        self._remote_panel.set_busy(True)
+        self.statusBar().showMessage("Scatto…")
+        self.remote_shoot.emit()
+
+    @pyqtSlot(bytes)
+    def on_remote_shot(self, review: bytes) -> None:
+        self._remote_panel.set_busy(False)
+        self._remote_view.show_review(review)
+        self.statusBar().showMessage("Scatto eseguito.", 4000)
+
+    def on_remote_movie_toggle(self) -> None:
+        if (not self._remote_active or self._remote_leaving
+                or not self._remote_panel._movie.isEnabled()):
+            return
+        self._remote_panel.set_busy(True)
+        if self._remote_panel.is_recording():
+            self.remote_movie_stop.emit()
+        else:
+            self.remote_movie_start.emit()
+
+    @pyqtSlot()
+    def on_remote_movie_started(self) -> None:
+        self._remote_panel.set_busy(False)
+        self._remote_panel.set_recording(True)
+        self._remote_view.set_focus_enabled(False)
+        self.statusBar().showMessage("Registrazione in corso.")
+
+    @pyqtSlot()
+    def on_remote_movie_stopped(self) -> None:
+        self._remote_panel.set_busy(False)
+        self._remote_panel.set_recording(False)
+        self._remote_view.set_focus_enabled(True)
+        self.statusBar().showMessage("Video salvato sulla scheda.", 4000)
+
+    @pyqtSlot(str)
+    def on_remote_failed(self, message: str) -> None:
+        self._remote_panel.set_busy(False)
+        self.statusBar().showMessage(message)
+        if not self._remote_view.has_frame():
+            self._remote_view.show_message(message, retry=True)
+
+    def exit_remote(self, view: str) -> None:
+        if not self._remote_active or self._remote_leaving:
+            return
+        self._remote_leaving = True
+        self._remote_exit_view = view
+        self._remote_panel.set_busy(True)
+        self.statusBar().showMessage("Uscita dal telecomando…")
+        if self._live_worker is not None:
+            self._live_worker.disarm()
+        self.remote_leave.emit()
+
+    @pyqtSlot()
+    def on_remote_left(self) -> None:
+        self._teardown_remote()
+        self._remote_active = False
+        self._remote_leaving = False
+        for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
+            scorciatoia.setEnabled(False)
+        self._remote_panel.set_recording(False)
+        self._remote_panel.set_busy(False)
+        self._remote_view.clear()
+        self._inspector_pages.setCurrentIndex(0)
+        self._inspector.set_title("Anteprima")
+        if self._closing:
+            return          # chiusura in corso: niente nuovo elenco né nuovi thread
+        self._set_library_controls(True)
+        self._suspend_thumbnails(False)
+        self.set_view(self._remote_exit_view)
+        self._update_remote_button()
+        # Un ListWorker nuovo ha un client nuovo, senza modalità ricordata:
+        # ensure_play_mode rimette davvero la fotocamera in riproduzione, e
+        # le foto e i video appena fatti compaiono nell'elenco.
+        self.on_refresh()
+
+    def _teardown_remote(self) -> None:
+        if self._live_worker is not None:
+            self._live_worker.stop()
+        for thread in self._remote_threads:
+            thread.quit()
+            thread.wait(2000)
+            if thread in self._threads:
+                self._threads.remove(thread)
+        self._remote_threads = []
+        for segnale in (self.remote_enter, self.remote_focus, self.remote_shoot,
+                        self.remote_movie_start, self.remote_movie_stop, self.remote_leave):
+            try:
+                segnale.disconnect()
+            except TypeError:
+                pass
+        for worker in (self._remote_worker, self._live_worker):
+            if worker is not None:
+                worker.blockSignals(True)
+        self._remote_worker = None
+        self._live_worker = None
 
     # ------------------------------------------------------------------
 
@@ -874,6 +1174,21 @@ class MainWindow(QMainWindow):
         Chiudere durante un trasferimento e' il caso normale, non un caso
         limite: la fotocamera e' lenta e l'utente se ne va.
         """
+        self._closing = True
+        if self._remote_active and self._remote_worker is not None:
+            # La fotocamera deve tornare in riproduzione anche chiudendo,
+            # ma senza tenere in ostaggio la chiusura: al massimo 3 s.
+            attesa = QEventLoop()
+            self._remote_worker.left.connect(attesa.quit)
+            QTimer.singleShot(3000, attesa.quit)
+            if not self._remote_leaving:
+                self._remote_leaving = True
+                if self._live_worker is not None:
+                    self._live_worker.disarm()
+                self.remote_leave.emit()
+            attesa.exec()
+            self._teardown_remote()
+            self._remote_active = False
         if self._download_worker is not None:
             self._download_worker.cancel()     # flag atomico, sicuro fra thread
 
