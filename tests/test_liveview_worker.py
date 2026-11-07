@@ -146,3 +146,12 @@ def test_garbage_produces_no_frame(qapp, live):
     time.sleep(0.3)
     qapp.processEvents()
     assert eventi["fotogrammi"] == 0
+
+
+def test_a_new_arm_restarts_the_sentinel(qapp, live):
+    make, _fotocamera = live
+    worker, eventi, _ = make(no_signal_after=0.3)
+    worker.arm()
+    assert _attendi(qapp, lambda: eventi["no_signal"] == 1, 2.0)
+    worker.arm()
+    assert _attendi(qapp, lambda: eventi["no_signal"] == 2, 2.0)

@@ -106,6 +106,7 @@ class LiveViewWorker(QObject):
         assembler = FrameAssembler()
         ultimo: float | None = None
         fermo = muto = False
+        visto: float | None = None
         while not self._stop.is_set():
             try:
                 dati, _origine = sock.recvfrom(65535)
@@ -125,6 +126,9 @@ class LiveViewWorker(QObject):
                         ultimo = adesso
                         self._deliver(immagine)
             armato = self._armed_at
+            if armato != visto:
+                fermo = muto = False
+                visto = armato
             if armato is None:
                 fermo = muto = False
                 continue
