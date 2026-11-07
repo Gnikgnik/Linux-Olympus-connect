@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from tools.prova_impostazioni import (
-    altro_valore, ordine_ripristino, parse_desclist, porta_sorgente,
+    altro_valore, parse_desclist, piano_ripristino, porta_sorgente, valori_modo,
 )
 
 DESCLIST = (Path(__file__).parent / "fixtures" / "remote" / "camprop_desclist.xml").read_bytes()
@@ -32,12 +32,35 @@ def test_porta_sorgente_swaps_the_bytes():
     assert porta_sorgente(35199) == 32649
 
 
-def test_ripristino_restores_the_mode_last_after_going_to_manual():
-    passi = ordine_ripristino({"takemode": "S", "isospeedvalue": "200", "focalvalue": "5.6"})
-    assert passi[0] == ("takemode", "M")
-    assert passi[-1] == ("takemode", "S")
-    assert set(passi[1:-1]) == {("isospeedvalue", "200"), ("focalvalue", "5.6")}
+def test_valori_modo_keeps_only_writable_exposure_values():
+    elenco = {
+        "isospeedvalue": ("getset", "200", []),
+        "focalvalue": ("get", "5.6", []),
+        "wbvalue": ("getset", "0", []),
+        "shutspeedvalue": ("getset", "640", []),
+    }
+    assert valori_modo(elenco) == {"isospeedvalue": "200", "shutspeedvalue": "640"}
 
 
-def test_ripristino_without_mode_is_just_the_values():
-    assert ordine_ripristino({"wbvalue": "0"}) == [("wbvalue", "0")]
+def test_piano_visits_each_mode_then_ends_in_the_original_mode():
+    per_modo = {
+        "P": {"isospeedvalue": "400"},
+        "A": {"shutspeedvalue": "250"},
+        "S": {"shutspeedvalue": "640", "isospeedvalue": "200"},
+        "M": {"focalvalue": "5.6"},
+    }
+    piano = piano_ripristino("S", per_modo, {"wbvalue": "0", "drivemode": "lowvib-normal",
+                                             "isospeedvalue": "200"})
+    assert [v for k, v in piano if k == "takemode"] == ["P", "A", "M", "S", "S"]
+    assert piano[-1] == ("takemode", "S")
+    assert [p for p in piano if p[0] != "takemode"] == [
+        ("isospeedvalue", "400"), ("shutspeedvalue", "250"), ("focalvalue", "5.6"),
+        ("shutspeedvalue", "640"), ("isospeedvalue", "200"),
+        ("wbvalue", "0"), ("drivemode", "lowvib-normal"),
+    ]
+
+
+def test_piano_without_per_mode_values_is_just_globals_in_the_original_mode():
+    assert piano_ripristino("S", {}, {"wbvalue": "0"}) == [
+        ("takemode", "S"), ("wbvalue", "0"), ("takemode", "S"),
+    ]
