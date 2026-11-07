@@ -709,6 +709,26 @@ def test_remote_leave_stops_a_recording_first_and_always_ends_in_play(qapp):
     assert ev["left"] == [True]
 
 
+def test_remote_leave_stops_a_movie_whose_start_timed_out(qapp):
+    # start_movie in timeout: la fotocamera può aver iniziato lo stesso.
+    client = _RemoteClient(fail={"start_movie": CameraNotReachable("timeout")})
+    worker, ev = _remote(client)
+    worker.start_movie()
+    assert not worker.is_recording() and ev["failed"]
+    worker.leave()
+    nomi = [c[0] for c in client.calls]
+    assert nomi[-3:] == ["stop_movie", "stop_liveview", "ensure_play_mode"]
+
+
+def test_remote_leave_does_not_stop_a_movie_after_a_clean_stop(qapp):
+    client = _RemoteClient()
+    worker, _ = _remote(client)
+    worker.start_movie()
+    worker.stop_movie()
+    worker.leave()
+    assert [c[0] for c in client.calls].count("stop_movie") == 1
+
+
 def test_remote_leave_emits_left_even_if_everything_fails(qapp):
     client = _RemoteClient(fail={n: CameraNotReachable("x") for n in
                                  ("stop_movie", "stop_liveview", "ensure_play_mode")})

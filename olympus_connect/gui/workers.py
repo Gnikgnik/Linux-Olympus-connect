@@ -293,6 +293,7 @@ class RemoteWorker(QObject):
         self._client = client
         self._quality = quality
         self._recording = False
+        self._movie_attempted = False
 
     def is_recording(self) -> bool:
         return self._recording
@@ -340,6 +341,7 @@ class RemoteWorker(QObject):
 
     @pyqtSlot()
     def start_movie(self) -> None:
+        self._movie_attempted = True      # un timeout non esclude che sia partito
         try:
             self._client.start_movie()
         except Exception as exc:
@@ -356,18 +358,20 @@ class RemoteWorker(QObject):
             self.failed.emit(describe_error(exc))
             return
         self._recording = False
+        self._movie_attempted = False
         self.movie_stopped.emit()
 
     @pyqtSlot()
     def leave(self) -> None:
         """Ogni passo è tentato anche se il precedente fallisce: la
         fotocamera deve tornare in riproduzione in ogni caso."""
-        if self._recording:
+        if self._recording or self._movie_attempted:
             try:
                 self._client.stop_movie()
             except Exception:
                 pass
             self._recording = False
+            self._movie_attempted = False
         for passo in (self._client.stop_liveview, self._client.ensure_play_mode):
             try:
                 passo()

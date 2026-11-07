@@ -104,7 +104,7 @@ I file finiscono in `~/Immagini/Olympus/ANNO/ANNO-MM-GG/NOME.EXT`, con la data d
 
 ### Telecomando
 
-Con la fotocamera collegata, il pulsante **Telecomando** nella barra in alto mostra il live al centro della finestra. Un clic sull'immagine mette a fuoco in quel punto; **Scatta** (o la barra spaziatrice) scatta e mostra la foto per due secondi; **Registra** (o il tasto R) avvia e ferma un video. Tornando a Miniature o a Elenco la fotocamera torna in riproduzione e l'elenco si aggiorna con i file nuovi. Le impostazioni di scatto (tempi, diaframmi, ISO) si cambiano sulla fotocamera.
+Con la fotocamera collegata, il pulsante **Telecomando** nella barra in alto mostra il live al centro della finestra. Un clic sull'immagine mette a fuoco in quel punto; **Scatta** (o la barra spaziatrice) scatta e mostra la foto per due secondi; **Registra** (o il tasto R) avvia e ferma un video. Tornando a Miniature o a Elenco la fotocamera torna in riproduzione e l'elenco si aggiorna con i file nuovi. Le impostazioni di scatto (tempi, diaframmi, ISO) si cambiano sulla fotocamera. Solo se il live non arriva (il messaggio «Nessuna immagine dalla fotocamera») il firewall sta bloccando i pacchetti UDP della fotocamera: consentili con `sudo ufw allow in from 192.168.0.10 proto udp`. Per la diagnostica sul campo, avviando con `OLYMPUS_DEBUG=1` il programma scrive su stderr il punto di messa a fuoco e le risposte della fotocamera.
 
 Non serve aprire porte nel firewall: prima di avviare il live il PC manda un pacchetto alla fotocamera, e il firewall accetta le risposte. Se il live non arriva comunque, l'app lo dice e suggerisce la regola da aggiungere.
 

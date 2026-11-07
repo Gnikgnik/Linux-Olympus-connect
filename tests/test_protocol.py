@@ -396,3 +396,44 @@ def test_rec_view_returns_a_jpeg_or_raises(requests_mock):
     requests_mock.get(f"{BASE_URL}/exec_takemisc.cgi", content=b"<x/>")
     with pytest.raises(ProtocolError):
         OlympusClient().rec_view()
+
+
+def test_assign_af_logs_the_point_and_the_raw_answer(requests_mock, caplog):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi",
+                      content=b"<response>\n  <affocus>ok</affocus>\n"
+                              b"  <afframepoint>0320x0240</afframepoint></response>")
+    with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
+        OlympusClient().assign_af(320, 240)
+    testo = caplog.text
+    assert "0320x0240" in testo and "<afframepoint>0320x0240</afframepoint>" in testo
+    assert "\n  <affocus>" not in testo, "gli spazi vanno compattati"
+
+
+def test_assign_af_log_is_truncated(requests_mock, caplog):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", content=b"x" * 5000)
+    with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
+        OlympusClient().assign_af(1, 2)
+    assert "x" * 301 not in caplog.text
+
+
+def test_touch_area_logs_the_raw_value(requests_mock, caplog):
+    requests_mock.get(f"{BASE_URL}/get_camprop.cgi",
+                      content=(REMOTE / "camprop_desclist.xml").read_bytes())
+    with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
+        OlympusClient().touch_area()
+    assert "0096-0072_0448x0336" in caplog.text
+
+
+def test_touch_area_logs_when_missing(requests_mock, caplog):
+    requests_mock.get(f"{BASE_URL}/get_camprop.cgi",
+                      content=b'<?xml version="1.0"?><desclist></desclist>')
+    with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
+        OlympusClient().touch_area()
+    assert "touchactiveframe" in caplog.text
+
+
+def test_enter_rec_mode_logs_the_quality(requests_mock, caplog):
+    requests_mock.get(f"{BASE_URL}/switch_cammode.cgi", content=b"")
+    with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
+        OlympusClient().enter_rec_mode("1024x0768")
+    assert "1024x0768" in caplog.text

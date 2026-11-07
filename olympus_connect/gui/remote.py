@@ -132,6 +132,9 @@ class RemoteView(QWidget):
         self._af_result = None
         self.update()
 
+    def af_pending(self) -> bool:
+        return self._af_pending
+
     def set_af_result(self, result: bool | None) -> None:
         self._af_pending = False
         self._af_result = result

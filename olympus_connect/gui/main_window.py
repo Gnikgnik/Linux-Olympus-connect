@@ -6,6 +6,8 @@ serve a dire dove sono andati, non a fare scena.
 """
 from __future__ import annotations
 
+import logging
+import os
 import sys
 import time
 from importlib import resources
@@ -1055,6 +1057,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str, object)
     def on_remote_entered(self, mode: str, area: object) -> None:
         self._remote_entered = True
+        logging.getLogger("olympus_connect.remote").debug("area di tocco ricevuta: %r", area)
         self._remote_panel.set_take_mode(mode)
         self._remote_panel.set_busy(False)
         self._remote_view.set_touch_area(area)
@@ -1076,11 +1079,16 @@ class MainWindow(QMainWindow):
     def on_live_no_signal(self) -> None:
         self._remote_view.show_message(
             "Nessuna immagine dalla fotocamera. Se il firewall blocca il live, "
-            "consenti i pacchetti UDP da 192.168.0.10 (vedi il README).", retry=True)
+            "consenti i pacchetti UDP da 192.168.0.10 (vedi il README, sezione Telecomando).", retry=True)
 
     def on_live_retry(self) -> None:
         if (not self._remote_active or self._live_worker is None
                 or self._remote_leaving or self._closing):
+            return
+        if self._remote_panel.is_recording():
+            # rientrare in rec a video in corso lo interromperebbe
+            self._remote_view.show_message(
+                "Live interrotto durante la registrazione: ferma il video e riprova.", retry=True)
             return
         self._remote_entered = False
         self._remote_panel.set_busy(True)
@@ -1092,6 +1100,8 @@ class MainWindow(QMainWindow):
         if (not self._remote_active or self._remote_leaving or self._closing
                 or self._remote_panel.is_recording()):
             return
+        logging.getLogger("olympus_connect.remote").debug(
+            "clic sul live: punto=(%d, %d) fotogramma=%r", x, y, self._remote_view.frame_size())
         self._remote_view.show_af(x, y)
         self.remote_focus.emit(x, y)
 
@@ -1142,7 +1152,9 @@ class MainWindow(QMainWindow):
         # Senza `entered` il live non c'è: i comandi restano spenti.
         self._remote_panel.set_busy(not self._remote_entered or self._remote_leaving)
         self.statusBar().showMessage(message)
-        if not self._remote_view.has_frame():
+        if self._remote_view.af_pending():
+            self._remote_view.set_af_result(False)
+        if not self._remote_entered or not self._remote_view.has_frame():
             self._remote_view.show_message(message, retry=True)
 
     def exit_remote(self, view: str) -> None:
@@ -1274,7 +1286,15 @@ def application_icon() -> QIcon:
         return QIcon(str(percorso))
 
 
+def configure_logging() -> None:
+    """Diagnostica per le prove sul campo: OLYMPUS_DEBUG=1 la attiva."""
+    if os.environ.get("OLYMPUS_DEBUG") == "1":
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr,
+                            format="%(asctime)s %(name)s %(message)s")
+
+
 def main() -> int:
+    configure_logging()
     app = QApplication(sys.argv)
     # Su Wayland è questo, non il titolo, che associa la finestra al file
     # .desktop: senza, il pannello di KDE mostra un'icona generica.

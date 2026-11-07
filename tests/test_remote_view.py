@@ -162,3 +162,12 @@ def test_panel_shows_the_dial(qapp):
     assert pannello.take_mode_text() == "S"
     pannello.set_take_mode("")
     assert pannello.take_mode_text() == "—"
+
+
+def test_af_pending_is_public(qapp):
+    view = RemoteView()
+    assert not view.af_pending()
+    view.show_af(10, 10)
+    assert view.af_pending()
+    view.set_af_result(False)
+    assert not view.af_pending()

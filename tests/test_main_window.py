@@ -808,6 +808,66 @@ def test_click_on_the_live_asks_for_focus(remote_win, qapp):
     assert _attendi(qapp, lambda: ("assign_af", 320, 240) in _RecordingClient.chiamate)
 
 
+def test_retry_while_recording_does_not_reenter(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win._remote_panel._movie.click()
+    assert _attendi(qapp, win._remote_panel.is_recording)
+    prima = [c for c in _RecordingClient.chiamate if c[0] == "enter_rec_mode"]
+    win._remote_view.retry_requested.emit()
+    _attendi(qapp, lambda: False, 0.3)
+    dopo = [c for c in _RecordingClient.chiamate if c[0] == "enter_rec_mode"]
+    assert dopo == prima
+    assert "ferma il video" in win._remote_view.message()
+    assert win._remote_entered
+
+
+def test_a_failure_clears_the_pending_af_box(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win._remote_view.show_af(10, 10)
+    assert win._remote_view.af_pending()
+    win.on_remote_failed("La fotocamera non risponde.")
+    assert not win._remote_view.af_pending()
+
+
+def test_failed_reentry_after_a_stall_offers_retry_again(remote_win, qapp):
+    win = remote_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+    win._remote_view.set_frame(QImage(64, 48, QImage.Format.Format_RGB32))
+    win._remote_entered = False          # come dopo Riprova, prima della risposta
+    win.on_remote_failed("La fotocamera non risponde.")
+    assert win._remote_view.message() == "La fotocamera non risponde."
+    assert win._remote_view._retry.isVisible()
+
+
+def test_focus_and_entry_are_logged(remote_win, qapp, caplog):
+    win = remote_win
+    with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
+        win._view_remote.click()
+        assert _attendi(qapp, lambda: win._remote_panel.take_mode_text() == "S")
+        win._remote_view.set_frame(QImage(64, 48, QImage.Format.Format_RGB32))
+        win._remote_view.focus_requested.emit(320, 240)
+        assert _attendi(qapp, lambda: ("assign_af", 320, 240) in _RecordingClient.chiamate)
+    assert "(96, 72, 448, 336)" in caplog.text
+    assert "320" in caplog.text and "(64, 48)" in caplog.text
+
+
+def test_main_configures_logging_only_with_the_env_var(monkeypatch):
+    from olympus_connect.gui import main_window
+    chiamate = []
+    monkeypatch.setattr(main_window.logging, "basicConfig", lambda **kw: chiamate.append(kw))
+    monkeypatch.delenv("OLYMPUS_DEBUG", raising=False)
+    main_window.configure_logging()
+    assert chiamate == []
+    monkeypatch.setenv("OLYMPUS_DEBUG", "1")
+    main_window.configure_logging()
+    assert chiamate and chiamate[0]["level"] == main_window.logging.DEBUG
+
+
 def test_leaving_stops_the_video_returns_to_play_and_relists(remote_win, qapp):
     win = remote_win
     win._view_remote.click()

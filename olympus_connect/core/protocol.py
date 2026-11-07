@@ -7,6 +7,7 @@ quindi senza conoscere gli endpoint CGI non c'è modo di arrivare ai file.
 """
 from __future__ import annotations
 
+import logging
 import re
 import xml.etree.ElementTree as ElementTree
 from contextlib import contextmanager
@@ -17,6 +18,8 @@ import requests
 
 from .errors import CameraAsleep, CameraNotReachable, OlympusError, ProtocolError
 from .model import CHUNK_SIZE, MediaFile, parse_imglist
+
+log = logging.getLogger("olympus_connect.remote")
 
 BASE_URL = "http://192.168.0.10"
 
@@ -217,6 +220,7 @@ class OlympusClient:
         Verificato sul campo: un mode=rec mandato quando la fotocamera è già
         in rec ignora lvqty. Per cambiare qualità si passa dalla riproduzione.
         """
+        log.debug("enter_rec_mode quality=%s", quality)
         self._get_ok("switch_cammode.cgi", mode="play")
         self._get_ok("switch_cammode.cgi", mode="rec", lvqty=quality)
         self._mode = "rec"
@@ -240,10 +244,13 @@ class OlympusClient:
         for desc in root.iter("desc"):
             if (desc.findtext("propname") or "").strip() != "touchactiveframe":
                 continue
-            trovato = re.fullmatch(r"\s*(\d+)-(\d+)_(\d+)x(\d+)\s*", desc.findtext("value") or "")
+            valore = desc.findtext("value") or ""
+            log.debug("touchactiveframe grezzo: %r", valore)
+            trovato = re.fullmatch(r"\s*(\d+)-(\d+)_(\d+)x(\d+)\s*", valore)
             if trovato:
                 x, y, w, h = (int(g) for g in trovato.groups())
                 return x, y, w, h
+        log.debug("touchactiveframe: nessun valore utilizzabile")
         return None
 
     def assign_af(self, x: int, y: int) -> bool | None:
@@ -251,8 +258,10 @@ class OlympusClient:
 
         True a fuoco, False messa a fuoco fallita, None se la risposta non
         dice l'esito."""
-        response = self._get_ok("exec_takemotion.cgi", com="assignafframe",
-                                point=f"{x:04d}x{y:04d}")
+        punto = f"{x:04d}x{y:04d}"
+        response = self._get_ok("exec_takemotion.cgi", com="assignafframe", point=punto)
+        corpo = " ".join(response.content.decode("utf-8", "replace").split())[:300]
+        log.debug("assignafframe punto=%s risposta=%s", punto, corpo)
         return _focus_result(response.content)
 
     def release_af(self) -> None:
