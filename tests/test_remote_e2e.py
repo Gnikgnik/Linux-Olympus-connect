@@ -119,11 +119,6 @@ def camera(qapp):
                 if qs.get("com") == "starttake":
                     return self._send(b'<?xml version="1.0"?><response><take>ok</take></response>')
                 return self._send(b"")
-            if nome in ("get_thumbnail.cgi", "set_timeout.cgi", "get_exif.cgi", "get_screennail.cgi"):
-                self.send_response(404)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -170,6 +165,13 @@ def test_remote_shows_the_live_shoots_and_returns_to_the_library(qapp, camera, t
         assert _attendi(qapp, lambda: finestra._model.rowCount() == 1161), "elenco non rifatto"
         modi = [qs.get("mode") for nome, qs in camera["richieste"] if nome == "switch_cammode.cgi"]
         assert "rec" in modi and modi[-1] == "play"
+
+        def elenco_dopo_il_play():
+            r = camera["richieste"]
+            play = [i for i, (n, q) in enumerate(r) if n == "switch_cammode.cgi" and q.get("mode") == "play"]
+            return any(n == "get_imglist.cgi" for n, _ in r[play[-1] + 1:]) if play else False
+
+        assert _attendi(qapp, elenco_dopo_il_play), "l'elenco non è stato richiesto di nuovo dopo l'uscita"
     finally:
         finestra.close()
         qapp.processEvents()

@@ -146,7 +146,7 @@ Un dettaglio che vale la pena conoscere: `ip route get 192.168.0.10` **riesce se
 
 **Non cancella niente dalla fotocamera.** Il protocollo ha `exec_erase.cgi`, ma non viene mai invocato: è l'unica operazione irreversibile disponibile, non serve a scaricare foto, e tenerla fuori significa che nessun difetto del programma potrà mai mangiarti gli scatti.
 
-Fuori scope anche live view, scatto remoto, sincronizzazione dell'orologio e log GPS. Tutti raggiungibili con lo stesso client, nessuno necessario.
+Fuori scope anche la sincronizzazione dell'orologio e il log GPS, entrambi raggiungibili con lo stesso client ma non necessari. Il cambio delle impostazioni di scatto dal PC (ISO, tempi, diaframmi) non c'è ancora: si cambiano sulla fotocamera.
 
 ## Test
 
