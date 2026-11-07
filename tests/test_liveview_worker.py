@@ -7,7 +7,7 @@ from PyQt6.QtCore import QBuffer, QByteArray, QThread
 from PyQt6.QtGui import QImage
 
 from tests.live_helpers import frame_packets, padded_jpeg
-from olympus_connect.gui.liveview import LiveViewWorker
+from olympus_connect.gui.liveview import LiveViewWorker, camera_source_port
 
 
 def _jpeg(larghezza, altezza=30) -> bytes:
@@ -155,3 +155,45 @@ def test_a_new_arm_restarts_the_sentinel(qapp, live):
     assert _attendi(qapp, lambda: eventi["no_signal"] == 1, 2.0)
     worker.arm()
     assert _attendi(qapp, lambda: eventi["no_signal"] == 2, 2.0)
+
+
+def test_camera_source_port_swaps_the_bytes():
+    # coppie misurate sul campo (log del firewall, 2026-11-07)
+    assert camera_source_port(40000) == 16540
+    assert camera_source_port(35199) == 32649
+    assert camera_source_port(40234) == 10909
+    for p in (1, 255, 256, 40000, 51234, 65535):
+        assert camera_source_port(camera_source_port(p)) == p
+
+
+def test_arm_without_a_camera_port_targets_the_byte_swapped_port(qapp):
+    worker = LiveViewWorker(camera=("127.0.0.1", None), bind_host="127.0.0.1")
+    eventi = []
+    worker.listening.connect(eventi.append)
+    thread = QThread()
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    thread.start()
+    fotocamera = None
+    try:
+        assert _attendi(qapp, lambda: eventi), "il worker non è in ascolto"
+        porta = eventi[0]
+        invertita = camera_source_port(porta)
+        if invertita < 1024:
+            pytest.skip("la porta invertita è privilegiata")
+        fotocamera = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            fotocamera.bind(("127.0.0.1", invertita))
+        except OSError:
+            pytest.skip("la porta invertita non è disponibile")
+        fotocamera.settimeout(1.0)
+        worker.arm()
+        dati, origine = fotocamera.recvfrom(16)
+        assert dati == b"\x00"
+        assert origine == ("127.0.0.1", porta)
+    finally:
+        if fotocamera is not None:
+            fotocamera.close()
+        worker.stop()
+        thread.quit()
+        thread.wait(2000)

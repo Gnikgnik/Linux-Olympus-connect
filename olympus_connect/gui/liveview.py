@@ -21,11 +21,24 @@ from PyQt6.QtGui import QImage
 
 from ..core.liveview import FrameAssembler
 
-# La fotocamera spedisce il live sempre da qui (prova sul campo). Un
-# datagramma mandato a questo indirizzo dalla porta su cui si ascolta fa
-# accettare al firewall i pacchetti di risposta: nessuna regola necessaria.
-CAMERA_LIVE = ("192.168.0.10", 16540)
+# La fotocamera spedisce il live dall'indirizzo 192.168.0.10, ma da una porta
+# che dipende da quella di ricezione (vedi camera_source_port). Un datagramma
+# mandato a quell'indirizzo dalla porta su cui si ascolta fa accettare al
+# firewall i pacchetti di risposta: nessuna regola necessaria. La porta None
+# significa «calcolala dalla porta di ricezione».
+CAMERA_LIVE = ("192.168.0.10", None)
 RECV_BUFFER = 4 * 1024 * 1024      # a 650 pacchetti/s il buffer predefinito trabocca
+
+
+def camera_source_port(port: int) -> int:
+    """Porta da cui la fotocamera spedisce il live, data la porta di ricezione.
+
+    Il firmware scambia i due byte della porta (endianness): la sorgente dei
+    pacchetti e la porta di destinazione richiesta con `startliveview` sono
+    una il byte-swap dell'altra. Coppie misurate (log del firewall,
+    2026-11-07): 40000 -> 16540, 35199 -> 32649, 40234 -> 10909.
+    """
+    return ((port & 0xFF) << 8) | (port >> 8)
 
 
 class LiveViewWorker(QObject):
@@ -35,7 +48,7 @@ class LiveViewWorker(QObject):
     no_signal = pyqtSignal()
     resumed = pyqtSignal()
 
-    def __init__(self, camera: tuple[str, int] = CAMERA_LIVE, bind_host: str = "",
+    def __init__(self, camera: tuple[str, int | None] = CAMERA_LIVE, bind_host: str = "",
                  stall_after: float = 2.0, no_signal_after: float = 3.0,
                  clock: Callable[[], float] = time.monotonic) -> None:
         super().__init__()
@@ -59,8 +72,11 @@ class LiveViewWorker(QObject):
         self._armed_at = self._clock()
         sock = self._sock
         if sock is not None:
+            host, port = self._camera
             try:
-                sock.sendto(b"\x00", self._camera)
+                if port is None:
+                    port = camera_source_port(sock.getsockname()[1])
+                sock.sendto(b"\x00", (host, port))
             except OSError:
                 pass
 

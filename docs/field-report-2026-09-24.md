@@ -336,3 +336,11 @@ Fatto. Risposte e pacchetti in diag-downloads/telecomando/.
 - **Dopo il video:** il live continua da solo (1896 pacchetti nei 3 s dopo lo stop), con dimensione di nuovo 640×480; durante la registrazione 640×360. L'«arresto» visto nella seconda esecuzione era una finestra di ascolto troppo corta.
 - **Messa a fuoco e scatto con il live acceso:** stesse risposte della seconda esecuzione; getrecview 38 270 byte in 43 ms, getlastjpg 1 563 988 byte in 1034 ms; live durante l'operazione 1595 pacchetti, 76 fotogrammi, 640×480.
 - **Decisioni:** qualità predefinita `1024x0768`; nessuna regola del firewall (l'app invia un datagramma prima di ogni `startliveview`); `RemoteView` segue la dimensione del fotogramma dal TLV 26.
+
+## Telecomando con l'app (2026-11-07), prima prova
+
+- **Live assente con porte effimere:** nell'app (porta di ricezione scelta dal sistema) il live non è mai arrivato.
+- **Sonda:** con la porta 40000 il live arriva (OK); con porte effimere 0 pacchetti; il momento in cui si invia il datagramma non cambia nulla.
+- **Log di blocco di ufw:** la porta di origine dei pacchetti della fotocamera è la porta di ricezione con i due byte scambiati: destinazione 40000 → origine 16540; 35199 → 32649; 40234 → 10909. La porta 16540 funzionava solo perché la sonda ascoltava sempre su 40000.
+- **Messa a fuoco:** `touchactiveframe` a 1024×768 = `0153-0115_0716x0537` (coordinate scalate, quindi quelle della messa a fuoco seguono la dimensione del live).
+- **Correzione:** il datagramma di apertura va a 192.168.0.10, porta = byte-swap della porta di ricezione (`camera_source_port`).
