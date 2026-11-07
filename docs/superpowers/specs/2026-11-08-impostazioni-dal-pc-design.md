@@ -1,0 +1,119 @@
+# Telecomando, pezzo D: impostazioni dal PC — Design
+
+**Data:** 2026-11-08
+**Stato:** approvato in sessione; il formato del comando di modifica e le regole per modalità si fissano con la prova sul campo descritta più avanti, che fa da cancello
+**Obiettivo:** dal pannello del telecomando, cambiare modalità, tempo, diaframma, ISO, compensazione, bilanciamento del bianco, modalità di scatto, filtri artistici e scene della fotocamera, vedendo l'effetto nel live.
+
+Segue la specifica del telecomando (`2026-11-06-telecomando-design.md`, pezzi A–C, fatti e verificati sul campo il 2026-11-07). Il pezzo E (automatismi) avrà una specifica sua.
+
+## Ambito
+
+**Dentro:** le impostazioni che la fotocamera dichiara modificabili (`attribute` = `getset`) dei gruppi scelti in sessione: esposizione (`takemode`, `shutspeedvalue`, `focalvalue`, `isospeedvalue`, `expcomp`), bilanciamento (`wbvalue`), modalità di scatto (`drivemode`), creativi (`artfilter`, `ArtEffectType<Filtro>`, `SceneSub`).
+
+**Fuori, di proposito:** l'esposizione dei video (`exposemovie`) e qualunque modifica durante una registrazione; `colorphase` (colore del filtro Partial Color); le proprietà in sola lettura (`touchactiveframe`, `lowvibtime`, `noisereduction`, …); qualunque impostazione della fotocamera fuori da `get_camprop`/`set_camprop`.
+
+## Fatti accertati
+
+Dall'elenco `get_camprop.cgi?com=desc&propname=desclist` registrato il 2026-11-06 (`tests/fixtures/remote/camprop_desclist.xml`, ghiera su S, obiettivo LUMIX G VARIO 12-32): ogni `<desc>` ha `propname`, `attribute` (`get` o `getset`), `value` ed `enum` (valori ammessi separati da spazi).
+
+| Proprietà | `getset` | Valori dichiarati |
+|---|---|---|
+| `takemode` | sì | `iAuto P A Scene2 S M ART movie` |
+| `shutspeedvalue` | sì | `60" … 1"` (secondi, con le virgolette) e `1.3 … 4000` (denominatori: 250 = 1/250 s) |
+| `focalvalue` | sì | `1.0 … 91`: l'intera scala, **non** quella dell'obiettivo montato (f/3,5–22 per il 12-32) |
+| `isospeedvalue` | sì | `Auto Low 200 … 25600` |
+| `expcomp` | sì | `-5.0 … +5.0` a passi di 0,3/0,4 |
+| `wbvalue` | sì | `0 18 16 17 20 35 23 256 257 258 259 512` |
+| `drivemode` | sì | `normal lowvib-normal silent-normal continuous-H silent-continuous-H continuous-L lowvib-continuous-L silent-continuous-L lowvib-selftimer customselftimer lowvib-customselftimer silent-customselftimer` |
+| `artfilter` | sì | `popart fantasic_focus daydream light_tone rough_monochrome toy_photo miniature cross_process gentle_sepia dramatic_tone ligne_clair pastel vintage partcolor bleach_bypass placame` |
+| `ArtEffectType<Filtro>` | sì | `Type1 Type2` (alcuni anche `Type3`) |
+| `SceneSub` | sì | `Portrait ePortrait LandscapeAndPerson NightViewPerson NightView NightBlastOffFirework NightLiveComposit Landscape Sunset BeachAndSnow HDRShooting Candle SilentShooting` |
+
+Dalla lista dei comandi: `set_camprop.cgi` usa **POST** con `com=set` e `propname`; il corpo non è dichiarato. Dal protocollo OPC il formato atteso è `<?xml version="1.0"?><set><value>VALORE</value></set>`. **Non verificato.**
+
+Dal pezzo C: i comandi della modalità scatto si mandano con il live acceso; la fotocamera risponde agli errori con HTTP 520 e `<errorcode>`.
+
+## Prova sul campo (cancello)
+
+Script `diag-downloads/prova_impostazioni.py` (ignorato da git), che gira **senza Internet** (PC collegato alla fotocamera) e scrive tutto in `diag-downloads/prova_impostazioni.txt`. Con un ricevitore UDP che svuota il live (datagramma di apertura alla porta con i byte scambiati, come l'app), in modalità scatto e con il live acceso:
+
+1. legge `desclist` e salva i valori originali di ogni proprietà che toccherà;
+2. **formato del comando**: porta `isospeedvalue` a un altro valore ammesso con `POST set_camprop.cgi?com=set&propname=isospeedvalue` e corpo `<?xml version="1.0"?><set><value>…</value></set>`, poi lo rilegge con `get`; se non cambia, prova le varianti `<set><value>…</value></set>` senza dichiarazione, `value=` come parametro della query, e `Content-Type: text/xml`; annota stato, corpo della risposta e quale variante funziona;
+3. per `P`, `A`, `S`, `M`: imposta `takemode`, rilegge `desclist` e annota per `shutspeedvalue`, `focalvalue`, `isospeedvalue`, `expcomp`: `attribute`, `value` ed `enum` (lunghezza e estremi);
+4. in `S`, prova a impostare `focalvalue`; in `A`, `shutspeedvalue`; con l'obiettivo montato, prova `focalvalue=1.0` in `A`: annota stato, `errorcode` e il valore riletto (rifiuto, adattamento o errore);
+5. imposta e rilegge `wbvalue` (un valore diverso) e `drivemode` (un valore diverso, mai l'autoscatto), annotando la risposta;
+6. in `finally`: rimette **ogni** proprietà toccata al valore originale, ferma il live, torna in riproduzione, e annota l'esito di ogni ripristino.
+
+Non scatta e non registra. La ghiera fisica non viene toccata.
+
+**Cancello.** Se nessuna variante cambia un valore, il lavoro si ferma qui. L'esito, con le regole per modalità ricavate, viene annotato in questa specifica e nel resoconto sul campo.
+
+## Architettura
+
+### Core (nessun import di Qt)
+
+**`core/camprops.py`, nuovo.**
+
+- `CameraProp` (dataclass frozen): `name: str`, `value: str`, `values: tuple[str, ...]`, `settable: bool`.
+- `parse_desclist(body: bytes) -> dict[str, CameraProp]`: legge ogni `<desc>`; `settable` = `"set" in attribute`; un `desc` malformato si salta; corpo illeggibile → dizionario vuoto. Non solleva.
+- `format_value(name: str, value: str) -> str`, in italiano:
+  - `shutspeedvalue`: `60"` → `60 s`, `1.3"` → `1,3 s`, `250` → `1/250`, `1.3` → `1/1,3`;
+  - `focalvalue`: `5.6` → `f/5,6`, `10` → `f/10`;
+  - `isospeedvalue`: `Auto` → `Auto`, `Low` → `Low`, numeri invariati;
+  - `expcomp`: `0.0` → `0 EV`, `+0.3` → `+0,3 EV`, `-0.7` → `−0,7 EV` (segno meno U+2212);
+  - `takemode`: `iAuto` → `iAuto`, `Scene2` → `Scene`, `ART` → `ART`, `movie` → `Video`, gli altri invariati;
+  - `wbvalue`: `0` Auto, `18` Luce diurna, `16` Ombra, `17` Nuvoloso, `20` Tungsteno, `35` Fluorescente, `23` Subacqueo, `256`–`259` Personalizzato 1–4, `512` Temperatura personalizzata; i nomi vanno confermati nella prova finale guardando il monitor della fotocamera;
+  - `drivemode`: `normal` Singolo, `lowvib-normal` Singolo anti-vibrazione, `silent-normal` Singolo silenzioso, `continuous-H` Raffica H, `silent-continuous-H` Raffica H silenziosa, `continuous-L` Raffica L, `lowvib-continuous-L` Raffica L anti-vibrazione, `silent-continuous-L` Raffica L silenziosa, `lowvib-selftimer` Autoscatto anti-vibrazione, `customselftimer` Autoscatto personalizzato, `lowvib-customselftimer` Autoscatto pers. anti-vibrazione, `silent-customselftimer` Autoscatto pers. silenzioso;
+  - `artfilter`: Pop Art, Soft Focus (`fantasic_focus`), Pale & Light Color (`daydream`), Light Tone, Grainy Film (`rough_monochrome`), Pin Hole (`toy_photo`), Diorama (`miniature`), Cross Process, Gentle Sepia, Dramatic Tone, Key Line (`ligne_clair`), Watercolor (`pastel`), Vintage, Partial Color (`partcolor`), Bleach Bypass, Instant Film (`placame`): i nomi della fotocamera, confermati nella prova finale;
+  - `ArtEffectType*`: `Type1` → I, `Type2` → II, `Type3` → III;
+  - `SceneSub`: Ritratto, e-Ritratto, Paesaggio e ritratto, Ritratto notturno, Notturno, Fuochi d'artificio, Live Composite notturno, Paesaggio, Tramonto, Spiaggia e neve, HDR, Lume di candela, Silenzioso;
+  - un valore senza traduzione si mostra così com'è.
+- `visible_props(props: dict[str, CameraProp]) -> list[str]`: i nomi delle righe da mostrare, in quest'ordine: `takemode`, `shutspeedvalue`, `focalvalue`, `isospeedvalue`, `expcomp`, `wbvalue`, `drivemode`; poi `artfilter` e `ArtEffectType<filtro corrente>` solo se `takemode` è `ART`; `SceneSub` solo se è `Scene2`. Solo le proprietà presenti nell'elenco.
+- `is_automatic(name: str, props) -> bool`: le righe che la modalità attuale lascia alla fotocamera; regola di partenza (da confermare con la prova): in `iAuto` tutte quelle di esposizione tranne `takemode`; in `P` tempo e diaframma; in `A` il tempo; in `S` il diaframma; in `M` nessuna; più ogni proprietà non `settable`.
+- `step(prop: CameraProp, current: str, delta: int) -> str`: il valore a `delta` passi nell'elenco dichiarato, fermo agli estremi (niente giro).
+
+**`core/protocol.py`.**
+
+- `camera_props() -> dict[str, CameraProp]`: `get_camprop.cgi?com=desc&propname=desclist`, con `parse_desclist`.
+- `set_prop(name: str, value: str) -> None`: `POST set_camprop.cgi?com=set&propname=<name>` con il corpo del formato verificato dalla prova; un HTTP diverso da 200 diventa `ProtocolError` con `code` (come gli altri comandi).
+
+### GUI
+
+**`RemoteWorker`** (`gui/workers.py`): due slot nuovi, in fila con gli altri comandi:
+- `read_props()` → emette `props_read(object)` (il dizionario) oppure `props_failed(str)`;
+- `set_prop(str, str)` → `set_prop` sul client, poi rilegge sempre l'elenco ed emette `props_read`; se la modifica fallisce emette `failed(messaggio)` e rilegge comunque, così il pannello torna al valore vero.
+- Dopo `entered`, la finestra chiede `read_props`.
+
+**`gui/props.py`, nuovo.**
+- `PropStepper(QWidget)`: etichetta a sinistra; a destra `‹ valore ›`. Le frecce e la rotella sopra il valore spostano di un passo nell'elenco dichiarato; un clic sul valore apre un `QMenu` con tutti i valori formattati. Mentre il valore mostrato è diverso da quello confermato, è attenuato. Dopo **250 ms** dall'ultimo passo emette `changed(name, value)` con il solo valore finale. Stato `automatic`: valore attenuato, scritta «automatico», frecce nascoste, nessuna interazione. `set_confirmed(value)` riallinea al valore della fotocamera.
+- `PropsSection(QWidget)`: intestazione «Impostazioni» (`SectionLabel`); costruisce e aggiorna una riga per ogni nome di `visible_props`, con l'etichetta italiana (Modalità, Tempo, Diaframma, ISO, Compensazione, Bilanciamento, Scatto, Filtro, Variante, Scena); `set_props(props)` aggiunge, toglie e aggiorna le righe senza ricostruire quelle che restano; `set_enabled(bool)`; segnale `prop_changed(name, value)`; messaggio «Impostazioni non disponibili» quando la lettura fallisce.
+
+**`RemotePanel`** (`gui/remote.py`): la sezione «Fotocamera» con la modalità in sola lettura è sostituita da `PropsSection`, sotto «Scatto».
+
+**`MainWindow`**: segnali `remote_read_props()` e `remote_set_prop(str, str)` verso il `RemoteWorker` (in coda, connessi e scollegati con gli altri della sessione); `on_remote_entered` chiede la lettura; `prop_changed` → `remote_set_prop`; `props_read` → `PropsSection.set_props`; i selettori sono spenti finché non c'è `entered`, durante uno scatto, durante la registrazione e durante l'uscita.
+
+## Errori
+
+- valore rifiutato (HTTP 520, `errorcode`): il selettore torna al valore confermato (la rilettura lo garantisce) e la barra di stato mostra il messaggio di `describe_error`;
+- lettura dell'elenco fallita: selettori spenti con «Impostazioni non disponibili»; scatto e video continuano;
+- valore sconosciuto: mostrato grezzo;
+- nessuna eccezione esce da worker o slot.
+
+## Test
+
+Tutti senza fotocamera.
+
+- **`tests/test_camprops.py`:** `parse_desclist` sull'elenco vero e su quelli registrati dalla prova per P, A, S, M (controllati per i seriali); `format_value` un caso per tipo, tempi in secondi e in denominatori, segno meno, ogni bilanciamento, ogni modalità di scatto, filtri, varianti, scene, valore sconosciuto; `visible_props` e `is_automatic` per ogni modalità registrata; `step` agli estremi.
+- **Protocollo:** `camera_props` sull'elenco vero; `set_prop` invia il metodo, la query e il corpo verificati (requests_mock); un 520 con `errorcode` diventa `ProtocolError` con il codice.
+- **`RemoteWorker`:** `set_prop` rilegge sempre, anche dopo un rifiuto; nessuna eccezione esce.
+- **`PropStepper`/`PropsSection`:** frecce, rotella, elenco al clic, un solo `changed` con il valore finale dopo 250 ms, ritorno al confermato, righe automatiche intoccabili, righe aggiunte e tolte al cambio di modalità.
+- **Finestra:** entrando si leggono le impostazioni; un cambio arriva al worker; durante il video i selettori sono spenti.
+- **Dall'inizio alla fine:** la fotocamera finta del test del telecomando accetta `POST set_camprop` e risponde con l'elenco aggiornato; la finestra vera mostra il nuovo valore. Il test va verificato **fallire senza la modifica**.
+
+## Prova finale con la fotocamera
+
+Con l'app (`OLYMPUS_DEBUG=1`, uscita registrata in un file): cambiare modalità, tempo, ISO, compensazione e bilanciamento dal PC e verificarli sul monitor della fotocamera e nel live; controllare i nomi di bilanciamento, filtri e scene contro quelli mostrati dalla fotocamera; uscire dal telecomando e verificare se la fotocamera torna a seguire la ghiera fisica.
+
+## Documentazione
+
+README: la riga nella tabella «Cosa funziona», il paragrafo nel «Telecomando», il file nuovo nello schema. DESIGN.md: la sezione Impostazioni del pannello e il selettore. Resoconto sul campo: gli esiti delle due prove.
