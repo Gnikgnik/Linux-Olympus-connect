@@ -86,6 +86,15 @@ _PATHS: dict[str, str] = {
         '<path d="M6.4 11.8a5.6 5.6 0 0 1 7.2 0"/>'
         '<path d="M10 15.6v.2"/>'
     ),
+    # Telecomando: la fotocamera con un'onda, come «a distanza».
+    "remote": (
+        '<path d="M2.5 8.5h3l1-1.7h4.8l1 1.7h3v8h-12.8z"/>'
+        '<circle cx="8.9" cy="12.5" r="2.2"/>'
+        '<path d="M14.6 3.4a4.2 4.2 0 0 1 2.9 2.9"/>'
+    ),
+    "shutter": '<circle cx="10" cy="10" r="6.6"/><circle cx="10" cy="10" r="2.9"/>',
+    "record": '<circle cx="10" cy="10" r="4.2"/><circle cx="10" cy="10" r="1.6"/>',
+    "stop": '<rect x="5.6" y="5.6" width="8.8" height="8.8" rx="1.6"/>',
 }
 
 

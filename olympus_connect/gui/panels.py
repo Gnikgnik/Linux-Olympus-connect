@@ -49,6 +49,10 @@ class VerticalLabel(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Fixed,
                            QSizePolicy.Policy.Expanding)
 
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self.update()
+
     def sizeHint(self) -> QSize:
         # Senza un sizeHint proprio il widget vale zero in altezza e non
         # disegna nulla: un widget personalizzato deve dichiarare quanto
@@ -192,6 +196,11 @@ class CollapsiblePanel(QFrame):
 
     def layout_body(self) -> QVBoxLayout:
         return self._body_layout
+
+    def set_title(self, text: str) -> None:
+        """Il titolo cambia con il contenuto: «Anteprima» o «Telecomando»."""
+        self._title.setText(text)
+        self._vertical_title.set_text(text)
 
     def toggle(self) -> None:
         self.set_expanded(not self._expanded)
