@@ -81,6 +81,13 @@ def valori_modo(elenco_: dict[str, tuple[str, str, list[str]]]) -> dict[str, str
             if attributo == "getset" and n in ESPOSIZIONE}
 
 
+def globali_scoperte(per_modo: dict[str, dict[str, str]],
+                     globali: dict[str, str]) -> dict[str, str]:
+    """Le impostazioni globali che nessuna modalità registra già."""
+    coperti = {nome for valori in per_modo.values() for nome in valori}
+    return {n: v for n, v in globali.items() if n not in coperti and n != "takemode"}
+
+
 def piano_ripristino(modo_originale: str, per_modo: dict[str, dict[str, str]],
                      globali: dict[str, str]) -> list[tuple[str, str]]:
     """Ogni modalità visitata in ordine, con i suoi valori; poi la modalità
@@ -91,11 +98,41 @@ def piano_ripristino(modo_originale: str, per_modo: dict[str, dict[str, str]],
         if modo != modo_originale:
             passi += [("takemode", modo), *valori.items()]
     passi += [("takemode", modo_originale), *per_modo.get(modo_originale, {}).items()]
-    coperti = {nome for valori in per_modo.values() for nome in valori}
-    passi += [(nome, valore) for nome, valore in globali.items()
-              if nome not in coperti and nome != "takemode"]
+    passi += list(globali_scoperte(per_modo, globali).items())
     passi.append(("takemode", modo_originale))
     return passi
+
+
+def raggruppa_piano(piano: list[tuple[str, str]]) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Il piano per modalità: ogni gruppo è una modalità e i suoi valori.
+    Un takemode uguale al gruppo precedente non apre un gruppo nuovo."""
+    gruppi: list[tuple[str, list[tuple[str, str]]]] = []
+    for nome, valore in piano:
+        if nome == "takemode":
+            if gruppi and gruppi[-1][0] == valore:
+                continue
+            gruppi.append((valore, []))
+        else:
+            if not gruppi:
+                raise ValueError("il piano deve iniziare con takemode")
+            gruppi[-1][1].append((nome, valore))
+    return gruppi
+
+
+def mancanti(esiti: list[tuple[str, str, str, str | None]]) -> list[str]:
+    """Le impostazioni non al valore voluto: (modo, nome, atteso, letto).
+    Il letto None vuol dire non ripristinata. Ogni riga compare una volta."""
+    out: list[str] = []
+    for modo, nome, atteso, letto in esiti:
+        if letto == atteso:
+            continue
+        if letto is None:
+            riga = f"{modo}: {nome} (atteso {atteso}, non ripristinato)"
+        else:
+            riga = f"{modo}: {nome} (atteso {atteso}, letto {letto})"
+        if riga not in out:
+            out.append(riga)
+    return out
 
 
 # -- rete -----------------------------------------------------------------------
@@ -275,27 +312,39 @@ def _ripristina_iso(stato: Stato, iso: str) -> None:
     scrivi(f"ISO NON rimesso a {iso}: nessun formato ha funzionato")
 
 
-def _esegui_piano(stato: Stato, piano: list[tuple[str, str]]) -> None:
-    for nome, valore in piano:
-        def passo(nome=nome, valore=valore):
-            stato_http, _ = imposta(stato.formato, nome, valore)
-            scrivi(f"  {nome}={valore}: HTTP {stato_http}, riletto {leggi(nome)}")
-        _sicuro(f"ripristino {nome}={valore}", passo)
-
-
-def _verifica(stato: Stato) -> list[str]:
-    """Confronta la lettura con gli originali (in modalità originale)."""
-    mancano = []
-    for nome, valore in stato.originali.items():
-        letto = leggi(nome)
-        if letto != valore:
-            mancano.append(f"{nome} (atteso {valore}, letto {letto})")
-    return mancano
+def _esegui_piano(stato: Stato, piano: list[tuple[str, str]]) -> list[tuple[str, str, str, str | None]]:
+    """Esegue il piano per modalità. Se la modalità non si legge come voluta,
+    i suoi valori non vengono scritti: restano come non ripristinati."""
+    esiti: list[tuple[str, str, str, str | None]] = []
+    for modo, valori in raggruppa_piano(piano):
+        try:
+            imposta(stato.formato, "takemode", modo)
+            time.sleep(0.3)
+            letto_modo = leggi("takemode")
+        except Exception:
+            scrivi(f"takemode {modo}: errore\n{traceback.format_exc()}")
+            letto_modo = "errore"
+        scrivi(f"  takemode {modo}: riletto {letto_modo}")
+        esiti.append((modo, "takemode", modo, letto_modo))
+        if letto_modo != modo:
+            scrivi(f"  modalità {modo} non raggiunta: {len(valori)} valori non ripristinati")
+            esiti += [(modo, nome, valore, None) for nome, valore in valori]
+            continue
+        for nome, valore in valori:
+            try:
+                stato_http, _ = imposta(stato.formato, nome, valore)
+                letto = leggi(nome)
+                scrivi(f"  {modo} {nome}={valore}: HTTP {stato_http}, riletto {letto}")
+            except Exception:
+                scrivi(f"  {modo} {nome}={valore}: errore\n{traceback.format_exc()}")
+                letto = None
+            esiti.append((modo, nome, valore, letto))
+    return esiti
 
 
 def ripristina_tutto(stato: Stato) -> list[str]:
     """Riporta ogni impostazione toccata al valore originale.
-    Ritorna quelle che, rilette, non tornano."""
+    Ritorna quelle che, rilette, non tornano (con la modalità)."""
     orig = stato.originali.get("takemode")
     iso = stato.originali.get("isospeedvalue")
     if stato.formato is None and iso is not None:
@@ -303,10 +352,15 @@ def ripristina_tutto(stato: Stato) -> list[str]:
     if stato.formato is None and orig is not None:
         _sicuro("ripristino modalità", lambda: cambia_modo(stato, orig)
                 if leggi("takemode") != orig else None)
-    if stato.formato is not None and orig is not None:
-        globali = {n: v for n, v in stato.originali.items() if n != "takemode"}
-        _esegui_piano(stato, piano_ripristino(orig, stato.per_modo, globali))
-    return _verifica(stato)
+    if stato.formato is None or orig is None:
+        return mancanti([("attuale", n, v, leggi(n)) for n, v in stato.originali.items()])
+    globali = {n: v for n, v in stato.originali.items() if n != "takemode"}
+    esiti = _esegui_piano(stato, piano_ripristino(orig, stato.per_modo, globali))
+    # verifica finale in modalità originale: solo quello che il piano ha scritto lì
+    attesi = {**globali_scoperte(stato.per_modo, globali), **stato.per_modo.get(orig, {})}
+    esiti += [(orig, n, v, leggi(n)) for n, v in attesi.items()]
+    esiti.append((orig, "takemode", orig, leggi("takemode")))
+    return mancanti(esiti)
 
 
 def _riepilogo_ripristino(stato: Stato) -> None:
@@ -370,11 +424,16 @@ def _prova(stato: Stato, svuota: Svuota) -> int:
 
     # 2. cosa è regolabile in P, A, S, M
     scrivi("== modalità ==")
+    senza_elenco: set[str] = set()
     for modo in ("P", "A", "S", "M"):
         if not cambia_modo(stato, modo):
             scrivi(f"modalità {modo} non raggiunta: la modalità non è stata visitata")
             continue
         e = elenco(modo)
+        if not e:
+            scrivi(f"modalità {modo}: desclist vuoto, modalità non registrata")
+            senza_elenco.add(modo)
+            continue
         stato.per_modo.setdefault(modo, valori_modo(e))
         for nome in ESPOSIZIONE:
             scrivi("  " + _riassunto(e, nome))
@@ -383,6 +442,9 @@ def _prova(stato: Stato, svuota: Svuota) -> int:
     scrivi("== richieste non consentite ==")
     for modo, nome, valore in (("S", "focalvalue", None), ("A", "shutspeedvalue", None),
                                ("A", "focalvalue", "1.0")):
+        if modo in senza_elenco:
+            scrivi(f"  {modo}, {nome}: desclist della modalità vuoto, caso saltato")
+            continue
         if not cambia_modo(stato, modo):
             scrivi(f"  modalità {modo} non raggiunta: {nome} non provato")
             continue
