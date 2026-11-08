@@ -50,15 +50,32 @@ def test_only_the_final_value_is_sent_after_the_pause(qapp):
 
 
 def test_a_reread_confirms_or_reverts(qapp):
-    s, _ = _stepper()
+    s, eventi = _stepper()
     s.step(1)
     s.set_prop(CameraProp("isospeedvalue", "250", ISO.values, True), False)
     assert _attendi(qapp, lambda: not s.is_pending())
     assert s.shown_value() == "250"
     s.step(1)
     assert not _attendi(qapp, lambda: False, 0.4)   # lascia scadere la pausa: il comando parte
+    assert eventi[-1] == ("isospeedvalue", "320")
     s.set_prop(ISO, False)              # rifiutato: la fotocamera è rimasta a 200
     assert _attendi(qapp, lambda: s.shown_value() == "200" and not s.is_pending())
+
+
+def test_a_pending_change_is_dropped_when_the_row_turns_automatic(qapp):
+    s, eventi = _stepper(APERTURA)
+    s.step(1)
+    s.set_prop(APERTURA, True)          # la ghiera è passata a S: l'apertura è automatica
+    assert s.shown_value() == "3.5" and not s.is_pending()
+    assert not _attendi(qapp, lambda: eventi, 0.4)
+
+
+def test_a_pending_change_is_dropped_when_the_row_is_disabled(qapp):
+    s, eventi = _stepper()
+    s.step(1)
+    s.setEnabled(False)
+    assert not _attendi(qapp, lambda: eventi, 0.4)
+    assert s.shown_value() == "200" and not s.is_pending()
 
 
 def test_wheel_steps(qapp):

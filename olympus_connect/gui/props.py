@@ -75,6 +75,8 @@ class PropStepper(QWidget):
         self._prop = prop
         self._automatic = automatic
         self._confirmed = prop.value
+        if automatic:
+            self._timer.stop()             # la fotocamera ha preso il controllo
         if not self._timer.isActive():
             self._shown = prop.value
         self._refresh()
@@ -119,6 +121,10 @@ class PropStepper(QWidget):
         menu.exec(self._value.mapToGlobal(self._value.rect().bottomLeft()))
 
     def _send(self) -> None:
+        if self._automatic or not self.isEnabled():
+            self._shown = self._confirmed  # niente comando: la riga non è più modificabile
+            self._refresh()
+            return
         if self._shown != self._confirmed:
             self.changed.emit(self._name, self._shown)
 
