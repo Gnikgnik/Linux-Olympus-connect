@@ -129,6 +129,12 @@ QMainWindow::separator {{ width: 0px; height: 0px; }}
 #faint {{ color: {TEXT_FAINT}; background: transparent; font-size: {SIZE_SMALL}px; }}
 #value {{ color: {TEXT}; background: transparent; font-size: {SIZE_SMALL}px; }}
 #shotHeadline {{ color: {TEXT}; background: transparent; font-size: {SIZE_STRONG}px; font-weight: 600; }}
+QPushButton#propValue {{ background: transparent; border: none; color: {TEXT}; font-size: {SIZE_SMALL}px; padding: 2px 4px; text-align: center; }}
+QPushButton#propValue:hover {{ background: {SURFACE}; }}
+QPushButton#propValue[pending="true"] {{ color: {TEXT_FAINT}; }}
+QPushButton#propValue:disabled {{ color: {TEXT_FAINT}; }}
+QPushButton#propArrow {{ background: transparent; border: none; padding: 0px; min-width: 20px; max-width: 20px; }}
+QPushButton#propArrow:hover {{ background: {SURFACE}; }}
 
 #separator {{ background: {LINE}; border: none; max-height: 1px; min-height: 1px; }}
 
