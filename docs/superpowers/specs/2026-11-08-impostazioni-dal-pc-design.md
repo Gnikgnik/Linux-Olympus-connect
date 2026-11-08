@@ -101,6 +101,17 @@ Non scatta e non registra. La ghiera fisica non viene toccata.
 
 **`MainWindow`**: segnali `remote_read_props()` e `remote_set_prop(str, str)` verso il `RemoteWorker` (in coda, connessi e scollegati con gli altri della sessione); `on_remote_entered` chiede la lettura; `prop_changed` → `remote_set_prop`; `props_read` → `PropsSection.set_props`; i selettori sono spenti finché non c'è `entered`, durante uno scatto, durante la registrazione e durante l'uscita.
 
+## Pose lunghe
+
+Misurato sul campo il 2026-11-08 (sonda offline, modalità M, riduzione rumore `noisereduction=auto`, soglia `NoiseReductionExposureTime=1"`): con 8" `starttake` risponde dopo 16,8 s, con 60" dopo 129,0 s, con 2" dopo circa 2 s. Oltre la soglia la fotocamera aggiunge un fotogramma scuro lungo quanto la posa, quindi resta occupata circa il doppio dell'esposizione più qualche secondo. In quel tempo non risponde a nessuna altra richiesta HTTP e il live non manda pacchetti; il Wi-Fi resta su. Quando `starttake` torna, `stoptake` risponde subito, `getrecview` funziona (circa 0,1 s) e il live riparte. Prima di questo lavoro l'attesa fissa di 15 s scadeva con 60", la finestra mostrava «Live interrotto» con Riprova, e un Riprova accodava `enter_rec_mode` dietro lo scatto: la sessione si rompeva.
+
+- **`camprops`:** `exposure_seconds` legge i tempi (`60"` e `2.5"` secondi, `1.3` e `250` frazioni; None per le pose Live e i valori illeggibili); `shot_busy_seconds` stima l'occupazione quando il tempo non è automatico nella modalità, raddoppiandola se la riduzione rumore non è `off` e la posa arriva alla soglia (soglia assente: 1 s; `noisereduction` assente: attiva); `shot_timeout` è l'occupazione più 15 s, o 135 s senza stima (un 60" scelto dalla fotocamera più il fotogramma scuro, più margine).
+- **Protocollo:** `take_picture(read_timeout)` aspetta `starttake` per quel tempo; `stoptake` segue sempre, anche dopo uno `starttake` fallito, e in quel caso un suo errore non copre l'originale.
+- **`RemoteWorker`:** ricorda l'ultimo elenco letto; prima di `starttake` emette `exposing(secondi)` se l'occupazione stimata è di almeno 2 s, e passa `shot_timeout` allo scatto.
+- **Finestra:** durante uno scatto il live fermo non mostra Riprova e Riprova non fa nulla; con `exposing` il live mostra «Posa in corso: ancora circa N s», aggiornato ogni secondo, poi «Quasi finito…» (anche nella barra di stato). A scatto finito, riuscito o no, se il live è ancora fermo compare il solito «Live interrotto.» con Riprova; se è ripartito (`resumed`) il conto alla rovescia sparisce. Il conto si ferma anche uscendo dal telecomando e chiudendo.
+
+Limite noto: la stima viene dall'ultimo elenco letto (all'ingresso e dopo ogni cambio dal PC). Un tempo cambiato sul corpo della fotocamera non è visto finché l'elenco non si rilegge.
+
 ## Errori
 
 - valore rifiutato (HTTP 520, `errorcode`): il selettore torna al valore confermato (la rilettura lo garantisce) e la barra di stato mostra il messaggio di `describe_error`;
