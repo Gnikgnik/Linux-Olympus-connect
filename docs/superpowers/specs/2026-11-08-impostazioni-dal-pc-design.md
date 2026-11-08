@@ -36,13 +36,13 @@ Dalla lista dei comandi: `set_camprop.cgi` usa **POST** con `com=set` e `propnam
 **Limiti dell'obiettivo nel live (prova dello zoom del 2026-11-08, LUMIX G VARIO 12-32 f/3,5–5,6).** Nell'estensione RTP del primo pacchetto di ogni fotogramma (stesso formato a TLV del pezzo C):
 - **TLV 9** = tre uint32 big endian, in decimi di f-stop: `[diaframma più chiuso, diaframma più aperto alla focale attuale, idem]`. Misurato: `[220, 35, 35]` a 12 mm, `[220, 46, 46]` a 20 mm, `[220, 56, 56]` a 32 mm: f/22 e f/3,5 → f/5,6, e il secondo valore segue lo zoom in tempo reale;
 - **TLV 18** = tre uint32, ciascuno due uint16 (alto, basso): la seconda parola è `(focale attuale, focale massima)` in mm (`(12, 32)` … `(32, 32)`); la prima vale `(8, 12)`, con 12 = focale minima.
-Il selettore del diaframma usa quindi solo i valori dell'elenco compresi fra `TLV9[1]/10` e `TLV9[0]/10` (tolleranza 0,05), aggiornati mentre si zooma.
+Il selettore del diaframma usa quindi solo i valori dell'elenco compresi fra `TLV9[1]/10` e `TLV9[0]/10` (tolleranza 0,05), aggiornati mentre si zooma. **Finché i limiti non sono noti** (nessun fotogramma del live ancora, o un live che non li dichiara) la riga del diaframma offre il **solo valore confermato**: niente passi, e l'elenco al clic contiene solo quello. Ha l'aspetto di una riga normale, non «automatico». Appena arrivano i limiti vale la gamma dell'obiettivo; se tornano ignoti, di nuovo il solo valore attuale. Motivo: la fotocamera accetta senza errore anche `f/1,0` su un obiettivo f/3,5.
 
 Dal pezzo C: i comandi della modalità scatto si mandano con il live acceso; la fotocamera risponde agli errori con HTTP 520 e `<errorcode>`.
 
 ## Prova sul campo (cancello)
 
-Script `diag-downloads/prova_impostazioni.py` (ignorato da git), che gira **senza Internet** (PC collegato alla fotocamera) e scrive tutto in `diag-downloads/prova_impostazioni.txt`. Con un ricevitore UDP che svuota il live (datagramma di apertura alla porta con i byte scambiati, come l'app), in modalità scatto e con il live acceso:
+Script `tools/prova_impostazioni.py` (nel repository), che gira **senza Internet** (PC collegato alla fotocamera) e scrive tutto in `diag-downloads/prova_impostazioni.txt` (ignorato da git), con gli elenchi grezzi in `diag-downloads/impostazioni/`. Con un ricevitore UDP che svuota il live (datagramma di apertura alla porta con i byte scambiati, come l'app), in modalità scatto e con il live acceso:
 
 1. legge `desclist` e salva i valori originali di ogni proprietà che toccherà;
 2. **formato del comando**: porta `isospeedvalue` a un altro valore ammesso con `POST set_camprop.cgi?com=set&propname=isospeedvalue` e corpo `<?xml version="1.0"?><set><value>…</value></set>`, poi lo rilegge con `get`; se non cambia, prova le varianti `<set><value>…</value></set>` senza dichiarazione, `value=` come parametro della query, e `Content-Type: text/xml`; annota stato, corpo della risposta e quale variante funziona;
@@ -79,11 +79,12 @@ Non scatta e non registra. La ghiera fisica non viene toccata.
 - `visible_props(props: dict[str, CameraProp]) -> list[str]`: i nomi delle righe da mostrare, in quest'ordine: `takemode`, `shutspeedvalue`, `focalvalue`, `isospeedvalue`, `expcomp`, `wbvalue`, `drivemode`; poi `artfilter` e `ArtEffectType<filtro corrente>` solo se `takemode` è `ART`; `SceneSub` solo se è `Scene2`. Solo le proprietà presenti nell'elenco.
 - `is_automatic(name: str, props) -> bool`: le righe che la modalità attuale lascia alla fotocamera; regola verificata dalla prova, per modalità, perché l'`attribute` dell'elenco non la distingue (in P, A, S, M tempo, diaframma, ISO e compensazione sono tutti `getset` e la fotocamera accetta ogni richiesta): in `iAuto` tutte quelle di esposizione tranne `takemode`; in `P` tempo e diaframma; in `A` il tempo; in `S` il diaframma; in `M` nessuna; più ogni proprietà non `settable`; più ogni proprietà il cui `enum` ha al massimo un valore (bloccata: in M `expcomp` dichiara il solo `0.0`).
 - `step(prop: CameraProp, current: str, delta: int) -> str`: il valore a `delta` passi nell'elenco dichiarato, fermo agli estremi (niente giro).
+- `HIDDEN` / `is_hidden(name, value)`: i valori per cui il percorso di scatto non è stato costruito e che la prova non ha mai usato apposta: in `shutspeedvalue` `livecomp`, `livetime`, `livebulb`; in `drivemode` ogni valore che contiene `selftimer`. Non compaiono nell'elenco al clic e i passi li saltano. Se la fotocamera è già su uno di questi (scelto sul corpo), la riga lo mostra come valore attuale (formattato) e il primo passo porta al valore selezionabile più vicino. I tempi lunghi come `60"` restano selezionabili (da verificare sul campo).
 
 **`core/protocol.py`.**
 
 - `camera_props() -> dict[str, CameraProp]`: `get_camprop.cgi?com=desc&propname=desclist`, con `parse_desclist`.
-- `set_prop(name: str, value: str) -> None`: `POST set_camprop.cgi?com=set&propname=<name>` con il corpo del formato verificato dalla prova; un HTTP diverso da 200 diventa `ProtocolError` con `code` (come gli altri comandi).
+- `set_prop(name: str, value: str) -> None`: `POST set_camprop.cgi?com=set&propname=<name>` con il corpo del formato verificato dalla prova; un HTTP diverso da 200 diventa `ProtocolError` con `code` (come gli altri comandi). Le virgolette dei tempi lunghi partono così come sono (`<value>60"</value>`: XML valido nel testo di un elemento, e il corpo verificato non conteneva mai entità); solo `&`, `<`, `>` diventerebbero entità, perché il corpo resti ben formato. Quale forma accetti la fotocamera per `60"` è da verificare sul campo.
 
 ### GUI
 
@@ -93,8 +94,8 @@ Non scatta e non registra. La ghiera fisica non viene toccata.
 - Dopo `entered`, la finestra chiede `read_props`.
 
 **`gui/props.py`, nuovo.**
-- `PropStepper(QWidget)`: etichetta a sinistra; a destra `‹ valore ›`. Le frecce e la rotella sopra il valore spostano di un passo nell'elenco dichiarato; un clic sul valore apre un `QMenu` con tutti i valori formattati. Mentre il valore mostrato è diverso da quello confermato, è attenuato. Dopo **250 ms** dall'ultimo passo emette `changed(name, value)` con il solo valore finale. Stato `automatic`: valore attenuato, scritta «automatico», frecce nascoste, nessuna interazione. `set_confirmed(value)` riallinea al valore della fotocamera.
-- `PropsSection(QWidget)`: intestazione «Impostazioni» (`SectionLabel`); costruisce e aggiorna una riga per ogni nome di `visible_props`, con l'etichetta italiana (Modalità, Tempo, Diaframma, ISO, Compensazione, Bilanciamento, Scatto, Filtro, Variante, Scena); `set_props(props)` aggiunge, toglie e aggiorna le righe senza ricostruire quelle che restano; `set_enabled(bool)`; segnale `prop_changed(name, value)`; messaggio «Impostazioni non disponibili» quando la lettura fallisce.
+- `PropStepper(QWidget)`: etichetta a sinistra; a destra `‹ valore ›`. Le frecce e la rotella sopra il valore spostano di un passo nell'elenco dichiarato; sulla riga della **modalità** la rotella non fa nulla (scorrendo il pannello si cambierebbe modalità per sbaglio) e passa al pannello che scorre: solo frecce ed elenco; un clic sul valore apre un `QMenu` con tutti i valori formattati. Mentre il valore mostrato è diverso da quello confermato, è attenuato. Dopo **250 ms** dall'ultimo passo emette `changed(name, value)` con il solo valore finale. Stato `automatic`: valore attenuato, scritta «automatico», frecce nascoste, nessuna interazione. `set_confirmed(value)` riallinea al valore della fotocamera.
+- `PropsSection(QWidget)`: intestazione «Impostazioni» (`SectionLabel`); costruisce e aggiorna una riga per ogni nome di `visible_props`, con l'etichetta italiana (Modalità, Tempo, Diaframma, ISO, Compensazione, Bilanciamento, Scatto, Filtro, Variante, Scena); `set_props(props)` aggiunge, toglie e aggiorna le righe senza ricostruire quelle che restano; `set_enabled(bool)`; segnale `prop_changed(name, value)`; quando parte un cambio di modalità le altre righe si spengono (i loro comandi in attesa cadono) fino alla rilettura, perché la fotocamera tiene i valori per modalità; un valore in attesa che il nuovo elenco o i nuovi limiti non ammettono cade; le righe tolte non inviano più nulla; messaggio «Impostazioni non disponibili» quando la lettura fallisce.
 
 **`RemotePanel`** (`gui/remote.py`): la sezione «Fotocamera» con la modalità in sola lettura è sostituita da `PropsSection`, sotto «Scatto».
 
@@ -103,7 +104,7 @@ Non scatta e non registra. La ghiera fisica non viene toccata.
 ## Errori
 
 - valore rifiutato (HTTP 520, `errorcode`): il selettore torna al valore confermato (la rilettura lo garantisce) e la barra di stato mostra il messaggio di `describe_error`;
-- lettura dell'elenco fallita: selettori spenti con «Impostazioni non disponibili»; scatto e video continuano;
+- lettura dell'elenco fallita, o elenco illeggibile (HTTP 200 con un corpo da cui non esce nessuna proprietà): selettori spenti con «Impostazioni non disponibili»; scatto e video continuano;
 - valore sconosciuto: mostrato grezzo;
 - nessuna eccezione esce da worker o slot.
 
