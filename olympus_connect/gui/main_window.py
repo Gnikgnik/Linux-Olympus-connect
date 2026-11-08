@@ -7,6 +7,7 @@ serve a dire dove sono andati, non a fare scena.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import time
@@ -117,6 +118,16 @@ class MainWindow(QMainWindow):
         self._listing = False
         self._remote_entered = False
         self._resume_was_enabled = False
+        # Pose lunghe: durante lo scatto il live si ferma di sicuro (la
+        # fotocamera non manda pacchetti finché starttake non torna), quindi
+        # l'avviso di live interrotto si rimanda alla fine dello scatto.
+        self._shot_in_flight = False
+        self._live_down: str | None = None     # avviso del live rimandato, se fermo
+        self._exposure_shown = False
+        self._exposure_left = 0
+        self._exposure_timer = QTimer(self)
+        self._exposure_timer.setInterval(1000)
+        self._exposure_timer.timeout.connect(self._on_exposure_tick)
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
@@ -1002,6 +1013,8 @@ class MainWindow(QMainWindow):
             return
         self._remote_active = True
         self._remote_entered = False
+        self._shot_in_flight = False
+        self._live_down = None
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
         # le loro richieste fallirebbero.
@@ -1032,6 +1045,7 @@ class MainWindow(QMainWindow):
         remote.failed.connect(self.on_remote_failed)
         remote.props_read.connect(self.on_remote_props)
         remote.props_failed.connect(self.on_remote_props_failed)
+        remote.exposing.connect(self.on_remote_exposing)
         coda = Qt.ConnectionType.QueuedConnection
         self.remote_enter.connect(remote.enter, coda)
         self.remote_focus.connect(remote.focus, coda)
@@ -1047,6 +1061,7 @@ class MainWindow(QMainWindow):
         live.frame_ready.connect(self.on_live_frame)
         live.stalled.connect(self.on_live_stalled)
         live.no_signal.connect(self.on_live_no_signal)
+        live.resumed.connect(self.on_live_resumed)
         live.lens_changed.connect(self.on_lens_changed)
 
         self._remote_worker = remote
@@ -1082,26 +1097,87 @@ class MainWindow(QMainWindow):
         if immagine is not None:
             self._remote_view.set_frame(immagine)
 
+    _LIVE_DOWN = {
+        "stalled": "Live interrotto.",
+        "no_signal": "Nessuna immagine dalla fotocamera. Se il firewall blocca il live, "
+                     "consenti i pacchetti UDP da 192.168.0.10 (vedi il README, sezione Telecomando).",
+    }
+
     @pyqtSlot()
     def on_live_stalled(self) -> None:
-        self._remote_view.show_message("Live interrotto.", retry=True)
+        self._live_lost("stalled")
 
     @pyqtSlot()
     def on_live_no_signal(self) -> None:
-        self._remote_view.show_message(
-            "Nessuna immagine dalla fotocamera. Se il firewall blocca il live, "
-            "consenti i pacchetti UDP da 192.168.0.10 (vedi il README, sezione Telecomando).", retry=True)
+        self._live_lost("no_signal")
+
+    def _live_lost(self, kind: str) -> None:
+        """Il worker del live avvisa una volta sola per ogni interruzione:
+        durante uno scatto l'avviso si ricorda e si mostra alla fine."""
+        self._live_down = kind
+        if self._shot_in_flight:
+            return
+        self._remote_view.show_message(self._LIVE_DOWN[kind], retry=True)
+
+    @pyqtSlot()
+    def on_live_resumed(self) -> None:
+        self._live_down = None
+
+    @pyqtSlot(float)
+    def on_remote_exposing(self, seconds: float) -> None:
+        """Posa lunga: conto alla rovescia sul live fermo, senza Riprova."""
+        if (not self._remote_active or self._remote_leaving or self._closing
+                or not self._shot_in_flight):
+            return
+        self._exposure_left = max(1, math.ceil(seconds))
+        self._exposure_shown = True
+        self._show_exposure()
+        self._exposure_timer.start()
+
+    def _on_exposure_tick(self) -> None:
+        self._exposure_left -= 1
+        if self._exposure_left <= 0:
+            self._exposure_timer.stop()
+        self._show_exposure()
+
+    def _show_exposure(self) -> None:
+        if self._exposure_left > 0:
+            testo = f"Posa in corso: ancora circa {self._exposure_left} s"
+        else:
+            testo = "Quasi finito…"
+        self._remote_view.show_message(testo)
+        self.statusBar().showMessage(testo)
+
+    def _stop_exposure(self) -> None:
+        self._exposure_timer.stop()
+        self._exposure_shown = False
+
+    def _end_shot(self) -> None:
+        """Fine dello scatto, riuscito o no: via il conto alla rovescia, e se
+        il live è ancora fermo il solito avviso con Riprova."""
+        mostrato = self._exposure_shown
+        self._shot_in_flight = False
+        self._stop_exposure()
+        if self._remote_leaving or self._closing or not self._remote_active:
+            return
+        if self._live_down is not None:
+            self._remote_view.show_message(self._LIVE_DOWN[self._live_down], retry=True)
+        elif mostrato:
+            self._remote_view.show_message("")
 
     def on_live_retry(self) -> None:
         if (not self._remote_active or self._live_worker is None
                 or self._remote_leaving or self._closing):
             return
+        if self._shot_in_flight:
+            return      # rientrare in rec si accoderebbe allo scatto e romperebbe la sessione
         if self._remote_panel.is_recording():
             # rientrare in rec a video in corso lo interromperebbe
             self._remote_view.show_message(
                 "Live interrotto durante la registrazione: ferma il video e riprova.", retry=True)
             return
         self._remote_entered = False
+        self._live_down = None           # arm() fa ripartire la sentinella del live
         self._remote_panel.set_busy(True)
         self._remote_view.show_message("Collegamento al live…")
         self._live_worker.arm()
@@ -1109,7 +1185,7 @@ class MainWindow(QMainWindow):
 
     def on_remote_focus_requested(self, x: int, y: int) -> None:
         if (not self._remote_active or self._remote_leaving or self._closing
-                or self._remote_panel.is_recording()):
+                or self._remote_panel.is_recording() or self._shot_in_flight):
             return
         logging.getLogger("olympus_connect.remote").debug(
             "clic sul live: punto=(%d, %d) fotogramma=%r", x, y, self._remote_view.frame_size())
@@ -1125,11 +1201,13 @@ class MainWindow(QMainWindow):
                 or not self._remote_panel._shoot.isEnabled()):
             return
         self._remote_panel.set_busy(True)
+        self._shot_in_flight = True
         self.statusBar().showMessage("Scatto…")
         self.remote_shoot.emit()
 
     @pyqtSlot(bytes)
     def on_remote_shot(self, review: bytes) -> None:
+        self._end_shot()
         self._remote_panel.set_busy(False)
         self._remote_view.show_review(review)
         self.statusBar().showMessage("Scatto eseguito.", 4000)
@@ -1160,6 +1238,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def on_remote_failed(self, message: str) -> None:
+        self._end_shot()
         # Senza `entered` il live non c'è: i comandi restano spenti.
         self._remote_panel.set_busy(not self._remote_entered or self._remote_leaving)
         self.statusBar().showMessage(message)
@@ -1202,6 +1281,7 @@ class MainWindow(QMainWindow):
         self._remote_leaving = True
         self._remote_exit_view = view
         self._remote_panel.set_busy(True)
+        self._stop_exposure()
         self._remote_view.show_message("Uscita dal telecomando…")   # toglie Riprova
         self.statusBar().showMessage("Uscita dal telecomando…")
         if self._live_worker is not None:
@@ -1214,6 +1294,8 @@ class MainWindow(QMainWindow):
         self._remote_active = False
         self._remote_entered = False
         self._remote_leaving = False
+        self._shot_in_flight = False
+        self._live_down = None
         for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
             scorciatoia.setEnabled(False)
         self._remote_panel.set_recording(False)
@@ -1240,6 +1322,7 @@ class MainWindow(QMainWindow):
         """
         if deadline is None:
             deadline = time.monotonic() + 2.0
+        self._stop_exposure()
         if self._live_worker is not None:
             self._live_worker.stop()
         workers = [self._remote_worker, self._live_worker]
@@ -1281,6 +1364,7 @@ class MainWindow(QMainWindow):
         limite: la fotocamera e' lenta e l'utente se ne va.
         """
         self._closing = True
+        self._stop_exposure()
         self._close_deadline = time.monotonic() + 3.0      # una scadenza per tutto
         if self._remote_active and self._remote_worker is not None:
             # La fotocamera deve tornare in riproduzione anche chiudendo,

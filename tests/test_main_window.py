@@ -687,7 +687,7 @@ class _RemoteStubClient(_RecordingClient):
         _RecordingClient.chiamate.append(("assign_af", x, y))
         return True
 
-    def take_picture(self):
+    def take_picture(self, read_timeout=None):
         _RecordingClient.chiamate.append(("take_picture",))
 
     def rec_view(self):
@@ -1185,3 +1185,158 @@ def test_no_read_is_sent_when_entered_arrives_while_leaving(props_win, qapp):
         assert not _attendi(qapp, lambda: _RecordingClient.chiamate.count(("camera_props",)) > letture, 0.3)
     finally:
         win._remote_leaving = False
+
+
+# --- pose lunghe -------------------------------------------------------------------
+
+import threading  # noqa: E402
+
+
+class _LongShotClient(_PropsStubClient):
+    """Uno scatto che resta in corso finché il test non lo rilascia."""
+    rilascio = threading.Event()
+    errore: Exception | None = None
+    attese: list = []
+
+    def take_picture(self, read_timeout=None):
+        _RecordingClient.chiamate.append(("take_picture",))
+        _LongShotClient.attese.append(read_timeout)
+        _LongShotClient.rilascio.wait(5)
+        if _LongShotClient.errore is not None:
+            raise _LongShotClient.errore
+
+
+@pytest.fixture
+def long_win(qapp, settings):
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    _PropsStubClient.valori = {"takemode": "M", "shutspeedvalue": '60"'}
+    _LongShotClient.rilascio = threading.Event()
+    _LongShotClient.errore = None
+    _LongShotClient.attese = []
+    _RemoteStubClient.revisione = _jpeg_valido()
+    win = MainWindow(client_factory=_LongShotClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive)
+    win.resize(1200, 700)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("shutspeedvalue") is not None)
+    win._remote_view.set_frame(QImage(64, 48, QImage.Format.Format_RGB32))
+    try:
+        yield win
+    finally:
+        _LongShotClient.rilascio.set()
+        win.close()
+
+
+def _posa(win, qapp):
+    win._remote_panel._shoot.click()
+    assert _attendi(qapp, lambda: win._remote_view.message().startswith("Posa in corso"))
+
+
+def test_a_long_exposure_shows_the_countdown(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    assert win._remote_view.message() == "Posa in corso: ancora circa 120 s"
+    assert not win._remote_view._retry.isVisible()
+    assert win.statusBar().currentMessage() == "Posa in corso: ancora circa 120 s"
+    assert _LongShotClient.attese == [pytest.approx(135.0)]
+    win._on_exposure_tick()
+    assert win._remote_view.message() == "Posa in corso: ancora circa 119 s"
+    assert win.statusBar().currentMessage() == "Posa in corso: ancora circa 119 s"
+    win._exposure_left = 1
+    win._on_exposure_tick()
+    assert win._remote_view.message() == "Quasi finito…"
+    assert win.statusBar().currentMessage() == "Quasi finito…"
+    assert not win._exposure_timer.isActive()
+
+
+def test_a_stalled_live_during_the_exposure_offers_no_retry(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    live = _FakeLive.istanze[-1]
+    live.stalled.emit()
+    live.no_signal.emit()
+    qapp.processEvents()
+    assert win._remote_view.message().startswith("Posa in corso")
+    assert not win._remote_view._retry.isVisible()
+
+
+def test_retry_is_ignored_during_the_exposure(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    prima = _RecordingClient.chiamate.count(("enter_rec_mode", "1024x0768"))
+    win.on_live_retry()
+    _attendi(qapp, lambda: False, 0.2)
+    assert _RecordingClient.chiamate.count(("enter_rec_mode", "1024x0768")) == prima
+    assert win._remote_view.message().startswith("Posa in corso")
+
+
+def test_after_the_shot_a_still_stalled_live_offers_retry(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    _FakeLive.istanze[-1].stalled.emit()
+    qapp.processEvents()
+    _LongShotClient.rilascio.set()
+    assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
+    assert win._remote_view._retry.isVisible()
+    assert not win._exposure_timer.isActive()
+
+
+def test_after_a_failed_shot_a_still_stalled_live_offers_retry(long_win, qapp):
+    from olympus_connect.core.errors import CameraAsleep
+    win = long_win
+    _LongShotClient.errore = CameraAsleep("La fotocamera non ha risposto entro il tempo previsto.")
+    _posa(win, qapp)
+    _FakeLive.istanze[-1].stalled.emit()
+    qapp.processEvents()
+    _LongShotClient.rilascio.set()
+    assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
+    assert win._remote_view._retry.isVisible()
+    assert not win._exposure_timer.isActive()
+
+
+def test_after_the_shot_a_resumed_live_clears_the_countdown(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    live = _FakeLive.istanze[-1]
+    live.stalled.emit()
+    live.resumed.emit()
+    qapp.processEvents()
+    _LongShotClient.rilascio.set()
+    assert _attendi(qapp, win._remote_view.is_reviewing)
+    assert _attendi(qapp, lambda: win._remote_view.message() == "")
+    assert not win._remote_view._retry.isVisible()
+    assert not win._exposure_timer.isActive()
+
+
+def test_a_stall_after_the_shot_still_offers_retry(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    _LongShotClient.rilascio.set()
+    assert _attendi(qapp, win._remote_view.is_reviewing)
+    _FakeLive.istanze[-1].stalled.emit()
+    assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
+    assert win._remote_view._retry.isVisible()
+
+
+def test_leaving_during_the_exposure_stops_the_countdown(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    win.exit_remote("griglia")
+    assert not win._exposure_timer.isActive()
+    assert win._remote_view.message() == "Uscita dal telecomando…"
+    _FakeLive.istanze[-1].stalled.emit()
+    _LongShotClient.rilascio.set()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert not win._remote_view._retry.isVisible()
+
+
+def test_closing_during_the_exposure_stops_the_countdown(long_win, qapp):
+    win = long_win
+    _posa(win, qapp)
+    _LongShotClient.rilascio.set()
+    win.close()
+    assert not win._exposure_timer.isActive()

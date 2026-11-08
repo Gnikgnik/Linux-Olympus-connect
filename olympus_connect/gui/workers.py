@@ -17,6 +17,7 @@ from ..core.errors import (
     CameraAsleep, CameraNotReachable, IncompleteDownload, NetworkUnavailable,
     ProtocolError, WrongNetwork,
 )
+from ..core.camprops import shot_busy_seconds, shot_timeout
 from ..core.protocol import LIVE_QUALITY
 
 
@@ -289,6 +290,11 @@ class RemoteWorker(QObject):
     failed = pyqtSignal(str)
     props_read = pyqtSignal(object)       # dict[str, CameraProp]
     props_failed = pyqtSignal(str)
+    exposing = pyqtSignal(float)          # secondi stimati di posa lunga, prima di starttake
+
+    # Sotto questa occupazione stimata lo scatto non si annuncia: con 2" sul
+    # campo starttake è tornato dopo circa 2 s e tutto ha funzionato.
+    EXPOSING_FROM = 2.0
 
     def __init__(self, client, quality: str = LIVE_QUALITY) -> None:
         super().__init__()
@@ -296,6 +302,7 @@ class RemoteWorker(QObject):
         self._quality = quality
         self._recording = False
         self._movie_attempted = False
+        self._props: dict = {}            # l'ultimo elenco letto, per stimare lo scatto
 
     def is_recording(self) -> bool:
         return self._recording
@@ -330,8 +337,14 @@ class RemoteWorker(QObject):
 
     @pyqtSlot()
     def shoot(self) -> None:
+        """Con una posa lunga starttake non torna prima della fine della posa
+        e della riduzione rumore: l'attesa viene dall'ultimo elenco letto, e
+        la finestra è avvisata prima, perché nel frattempo il live si ferma."""
+        occupata = shot_busy_seconds(self._props)
+        if occupata is not None and occupata >= self.EXPOSING_FROM:
+            self.exposing.emit(occupata)
         try:
-            self._client.take_picture()
+            self._client.take_picture(read_timeout=shot_timeout(self._props))
         except Exception as exc:
             self.failed.emit(describe_error(exc))
             return
@@ -366,7 +379,9 @@ class RemoteWorker(QObject):
     @pyqtSlot()
     def read_props(self) -> None:
         try:
-            self.props_read.emit(self._client.camera_props())
+            props = self._client.camera_props()
+            self._props = props
+            self.props_read.emit(props)
         except Exception as exc:
             self.props_failed.emit(describe_error(exc))
 

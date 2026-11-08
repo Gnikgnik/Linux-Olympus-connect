@@ -2,6 +2,7 @@
 di lavoro e si raccolgono i signal emessi. Serve un QApplication perché i
 QObject con signal ne richiedono uno."""
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -614,8 +615,9 @@ class _RemoteClient:
         self._call("assign_af", x, y)
         return True
 
-    def take_picture(self):
+    def take_picture(self, read_timeout=None):
         self._call("take_picture")
+        self.read_timeout = read_timeout
 
     def rec_view(self):
         self._call("rec_view")
@@ -795,3 +797,82 @@ def test_failed_read_reports_props_failed(qapp):
     worker, ev = _props_worker(_PropsClient(fail={"camera_props": CameraNotReachable("x")}))
     worker.read_props()
     assert ev["props"] == [] and ev["props_failed"]
+
+
+# --- pose lunghe -------------------------------------------------------------------
+
+_REMOTE_FIXTURES = Path(__file__).parent / "fixtures" / "remote"
+
+
+def _desclist(file, **valori):
+    from olympus_connect.core.camprops import CameraProp, parse_desclist
+    props = parse_desclist((_REMOTE_FIXTURES / file).read_bytes())
+    for nome, valore in valori.items():
+        p = props[nome]
+        props[nome] = CameraProp(p.name, valore, p.values, p.settable)
+    return props
+
+
+class _ExposureClient(_PropsClient):
+    def __init__(self, props, fail=None):
+        super().__init__(fail=fail)
+        self.props = props
+
+    def take_picture(self, read_timeout=None):
+        self._call("take_picture", read_timeout)
+        self.read_timeout = read_timeout
+
+
+def _exposure_worker(client):
+    worker, ev = _props_worker(client)
+    ev["exposing"] = []
+    worker.exposing.connect(lambda s: ev["exposing"].append((s, list(client.calls))))
+    return worker, ev
+
+
+def test_a_long_exposure_is_announced_before_starttake(qapp):
+    client = _ExposureClient(_desclist("desclist_M.xml", shutspeedvalue='60"'))
+    worker, ev = _exposure_worker(client)
+    worker.read_props()
+    worker.shoot()
+    [(secondi, chiamate_prima)] = ev["exposing"]
+    assert secondi == pytest.approx(120.0)
+    assert "take_picture" not in [c[0] for c in chiamate_prima]
+    assert ("take_picture", pytest.approx(135.0)) in client.calls
+    assert ev["shot"] == [b"\xff\xd8rev"]
+
+
+def test_a_short_shot_is_not_announced(qapp):
+    client = _ExposureClient(_desclist("desclist_M.xml", shutspeedvalue="250"))
+    worker, ev = _exposure_worker(client)
+    worker.read_props()
+    worker.shoot()
+    assert ev["exposing"] == []
+    assert client.read_timeout == pytest.approx(15.004)
+
+
+def test_an_automatic_shutter_is_not_announced_and_waits_the_worst_case(qapp):
+    client = _ExposureClient(_desclist("desclist_A.xml"))
+    worker, ev = _exposure_worker(client)
+    worker.read_props()
+    worker.shoot()
+    assert ev["exposing"] == []
+    assert client.read_timeout == pytest.approx(135.0)
+
+
+def test_shooting_before_any_read_waits_the_worst_case(qapp):
+    client = _ExposureClient({})
+    worker, ev = _exposure_worker(client)
+    worker.shoot()
+    assert ev["exposing"] == [] and client.read_timeout == pytest.approx(135.0)
+
+
+def test_the_last_read_wins(qapp):
+    client = _ExposureClient(_desclist("desclist_M.xml", shutspeedvalue='60"'))
+    worker, ev = _exposure_worker(client)
+    worker.read_props()
+    client.props = _desclist("desclist_M.xml", shutspeedvalue='8"', noisereduction="off")
+    worker.read_props()
+    worker.shoot()
+    assert [s for s, _ in ev["exposing"]] == [pytest.approx(8.0)]
+    assert client.read_timeout == pytest.approx(23.0)
