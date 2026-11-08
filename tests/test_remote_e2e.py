@@ -7,6 +7,7 @@ alla porta richiesta, come fa la fotocamera vera.
 import socket
 import threading
 import time
+import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -54,7 +55,7 @@ def _attendi(qapp, condizione, secondi=10.0):
 
 @pytest.fixture
 def camera(qapp):
-    stato = {"richieste": [], "invio": None, "modo": "play"}
+    stato = {"richieste": [], "invio": None, "modo": "play", "valori": {}}
     mittente = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     mittente.bind(("127.0.0.1", 0))
     fermo = threading.Event()
@@ -68,6 +69,14 @@ def camera(qapp):
                 mittente.sendto(p, destinazione)
             seq += len(frame_packets(fotogramma, seq=seq))
             time.sleep(1 / 30)
+
+    def desclist():
+        radice = ET.fromstring((FIXTURES / "remote" / "camprop_desclist.xml").read_bytes())
+        for desc in radice.iter("desc"):
+            nome = desc.findtext("propname")
+            if nome in stato["valori"]:
+                desc.find("value").text = stato["valori"][nome]
+        return b'<?xml version="1.0"?>' + ET.tostring(radice)
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -100,8 +109,9 @@ def camera(qapp):
                 f = "imglist_dcim.csv" if qs["DIR"] == "/DCIM" else "imglist_dcim_100olymp.csv"
                 return self._send((FIXTURES / f).read_bytes(), "text/plain")
             if nome == "get_camprop.cgi":
-                f = "camprop_takemode.xml" if qs.get("propname") == "takemode" else "camprop_desclist.xml"
-                return self._send((FIXTURES / "remote" / f).read_bytes())
+                if qs.get("propname") == "takemode":
+                    return self._send((FIXTURES / "remote" / "camprop_takemode.xml").read_bytes())
+                return self._send(desclist())
             if nome == "exec_takemisc.cgi" and qs.get("com") == "startliveview":
                 fermo.clear()
                 destinazione = (self.client_address[0], int(qs["port"]))
@@ -119,6 +129,19 @@ def camera(qapp):
                 if qs.get("com") == "starttake":
                     return self._send(b'<?xml version="1.0"?><response><take>ok</take></response>')
                 return self._send(b"")
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_POST(self):
+            url = urlparse(self.path)
+            nome = url.path.lstrip("/")
+            qs = {k: v[0] for k, v in parse_qs(url.query).items()}
+            corpo = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if nome == "set_camprop.cgi":
+                stato["valori"][qs["propname"]] = ET.fromstring(corpo).findtext("value")
+                stato["richieste"].append((nome, qs))
+                return self._send(b'<?xml version="1.0"?><response/>')
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -172,6 +195,37 @@ def test_remote_shows_the_live_shoots_and_returns_to_the_library(qapp, camera, t
             return any(n == "get_imglist.cgi" for n, _ in r[play[-1] + 1:]) if play else False
 
         assert _attendi(qapp, elenco_dopo_il_play), "l'elenco non è stato richiesto di nuovo dopo l'uscita"
+    finally:
+        finestra.close()
+        qapp.processEvents()
+
+
+def test_a_setting_changed_from_the_pc_reaches_the_camera(qapp, camera, tmp_path):
+    impostazioni = QSettings(str(tmp_path / "e2e.ini"), QSettings.Format.IniFormat)
+    impostazioni.setValue("dest_root", str(tmp_path / "dest"))
+    finestra = MainWindow(
+        client_factory=lambda: OlympusClient(base_url=camera["base_url"]),
+        network_factory=_Net,
+        settings=impostazioni,
+        live_factory=lambda: LiveViewWorker(camera=camera["udp"], bind_host="127.0.0.1"),
+    )
+    try:
+        finestra.resize(1366, 740)
+        finestra.show()
+        finestra.on_refresh()
+        assert _attendi(qapp, lambda: finestra._model.rowCount() == 1161)
+        assert _attendi(qapp, lambda: finestra._view_remote.isEnabled())
+        finestra._view_remote.click()
+        sezione = finestra._remote_panel.props
+        assert _attendi(qapp, lambda: sezione.row("isospeedvalue") is not None), \
+            "le impostazioni non sono arrivate al pannello"
+        sezione.row("isospeedvalue").step(1)
+        assert _attendi(qapp, lambda: camera["valori"].get("isospeedvalue") == "250"), \
+            "la modifica non è arrivata alla fotocamera"
+        assert _attendi(qapp, lambda: sezione.row("isospeedvalue").confirmed_value() == "250"), \
+            "il pannello non ha riletto il nuovo valore"
+        finestra._view_grid.click()
+        assert _attendi(qapp, lambda: not finestra._remote_active)
     finally:
         finestra.close()
         qapp.processEvents()

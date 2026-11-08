@@ -39,6 +39,7 @@ L'applicazione ufficiale vede **2 file su 1161**. Chi scatta in RAW non ha nessu
 | Miniature per JPEG, RAW e video | ✅ `get_thumbnail.cgi` restituisce JPEG validi di 8–13 KB per tutti i tipi |
 | Dati di scatto prima di scaricare | ✅ tempo, diaframma, ISO, focale, obiettivo e altri, da `get_exif.cgi` (verificato sui RAW; JPEG e video da verificare) |
 | Telecomando: live, messa a fuoco col tocco, scatto, video | ✅ live a 1024×768 e 30 fotogrammi/s, nessuna regola del firewall |
+| Impostazioni dal PC: modalità, tempo, diaframma, ISO, compensazione, bilanciamento, scatto, filtri | da verificare sul campo: il comando `set_camprop` è provato a mano (ISO, tempo, diaframma, bilanciamento, scatto), il pannello non ancora; diaframma limitato all'obiettivo e allo zoom |
 | Richieste `Range` (ripresa) | ❌ **non supportate**: risponde `200` senza `Content-Range` |
 | `set_timeout.cgi` (keep-alive) | ❌ dichiarato ma risponde `520` / `errorcode 1006` |
 | `get_unusedcapacity.cgi` | ❌ restituisce `0xFFFFFFFF`, sentinella di «non disponibile» |
@@ -104,7 +105,9 @@ I file finiscono in `~/Immagini/Olympus/ANNO/ANNO-MM-GG/NOME.EXT`, con la data d
 
 ### Telecomando
 
-Con la fotocamera collegata, il pulsante **Telecomando** nella barra in alto mostra il live al centro della finestra. Un clic sull'immagine mette a fuoco in quel punto; **Scatta** (o la barra spaziatrice) scatta e mostra la foto per due secondi; **Registra** (o il tasto R) avvia e ferma un video. Tornando a Miniature o a Elenco la fotocamera torna in riproduzione e l'elenco si aggiorna con i file nuovi. Le impostazioni di scatto (tempi, diaframmi, ISO) si cambiano sulla fotocamera. Solo se il live non arriva (il messaggio «Nessuna immagine dalla fotocamera») il firewall sta bloccando i pacchetti UDP della fotocamera: consentili con `sudo ufw allow in from 192.168.0.10 proto udp`. Per la diagnostica sul campo, avviando con `OLYMPUS_DEBUG=1` il programma scrive su stderr il punto di messa a fuoco e le risposte della fotocamera.
+Con la fotocamera collegata, il pulsante **Telecomando** nella barra in alto mostra il live al centro della finestra. Un clic sull'immagine mette a fuoco in quel punto; **Scatta** (o la barra spaziatrice) scatta e mostra la foto per due secondi; **Registra** (o il tasto R) avvia e ferma un video. Tornando a Miniature o a Elenco la fotocamera torna in riproduzione e l'elenco si aggiorna con i file nuovi. Solo se il live non arriva (il messaggio «Nessuna immagine dalla fotocamera») il firewall sta bloccando i pacchetti UDP della fotocamera: consentili con `sudo ufw allow in from 192.168.0.10 proto udp`. Per la diagnostica sul campo, avviando con `OLYMPUS_DEBUG=1` il programma scrive su stderr il punto di messa a fuoco e le risposte della fotocamera.
+
+Sotto Scatta e Registra, la sezione **Impostazioni** mostra modalità, tempo, diaframma, ISO, compensazione, bilanciamento e modalità di scatto (in ART anche filtro e variante, in Scene la scena). Le frecce, la rotella del mouse o un clic sul valore li cambiano; il comando parte un attimo dopo l'ultimo passo. Le righe che la modalità lascia alla fotocamera sono attenuate («automatico»). Il diaframma offre solo i valori possibili con l'obiettivo e lo zoom del momento.
 
 Non serve aprire porte nel firewall: prima di avviare il live il PC manda un pacchetto alla fotocamera, e il firewall accetta le risposte. Se il live non arriva comunque, l'app lo dice e suggerisce la regola da aggiungere.
 
@@ -146,7 +149,7 @@ Un dettaglio che vale la pena conoscere: `ip route get 192.168.0.10` **riesce se
 
 **Non cancella niente dalla fotocamera.** Il protocollo ha `exec_erase.cgi`, ma non viene mai invocato: è l'unica operazione irreversibile disponibile, non serve a scaricare foto, e tenerla fuori significa che nessun difetto del programma potrà mai mangiarti gli scatti.
 
-Fuori scope anche la sincronizzazione dell'orologio e il log GPS, entrambi raggiungibili con lo stesso client ma non necessari. Il cambio delle impostazioni di scatto dal PC (ISO, tempi, diaframmi) non c'è ancora: si cambiano sulla fotocamera.
+Fuori scope anche la sincronizzazione dell'orologio e il log GPS, entrambi raggiungibili con lo stesso client ma non necessari.
 
 ## Test
 
@@ -154,7 +157,7 @@ Fuori scope anche la sincronizzazione dell'orologio e il log GPS, entrambi raggi
 .venv/bin/python -m pytest
 ```
 
-421 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
+528 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
 
 Il test più importante è `test_download_recovers_from_drop_at_half_without_range`: un server locale chiude la connessione a metà del corpo **e** ignora il `Range`, cioè riproduce esattamente il comportamento di questa fotocamera. Verifica che il recupero produca un file corretto invece di un file corrotto.
 
@@ -170,6 +173,7 @@ olympus_connect/
 │   ├── stats.py        velocità, tempo stimato, formattazione delle misure
 │   ├── exif.py         dati di scatto dall'EXIF standard, in italiano
 │   ├── liveview.py     pacchetti RTP del live, ricomposizione dei fotogrammi
+│   ├── camprops.py     impostazioni della fotocamera, testo italiano e regole
 │   └── errors.py
 ├── gui/             worker su QThread, il core non sa che Qt esista
 │   ├── workers.py      ListWorker, ThumbWorker, PreviewWorker, DownloadWorker
@@ -178,6 +182,7 @@ olympus_connect/
 │   ├── shot.py         sezione Scatto del pannello
 │   ├── liveview.py     ricezione del live su un thread
 │   ├── remote.py       vista del live e comandi del telecomando
+│   ├── props.py        sezione Impostazioni del telecomando
 │   ├── panels.py       pannelli laterali richiudibili e animati
 │   ├── theme.py        palette scura e foglio di stile
 │   ├── icons.py        icone disegnate a tracciato, un solo peso
