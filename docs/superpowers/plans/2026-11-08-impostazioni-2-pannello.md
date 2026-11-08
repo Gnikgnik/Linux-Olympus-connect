@@ -1501,7 +1501,7 @@ OLYMPUS_DEBUG=1 .venv/bin/python -m olympus_connect 2>&1 | tee diag-downloads/pr
 nmcli connection down olympus-connect-E-M10MKIV-P-<seriale>
 ```
 
-Sequenza: Telecomando; cambia **Modalità** (P, A, S, M: le righe automatiche cambiano?); in A cambia il **Diaframma** con la rotella e zooma (l'elenco segue lo zoom? sul monitor della fotocamera il valore è lo stesso?); cambia **ISO**, **Compensazione**, **Tempo** in S; **Bilanciamento** (i nomi coincidono con quelli della fotocamera?); **Scatto** (singolo/raffica); **ART** (Filtro e Variante compaiono? i nomi coincidono?); uno scatto con impostazioni cambiate; esci e controlla se la fotocamera torna a seguire la ghiera fisica.
+Sequenza: Telecomando; cambia **Modalità** (P, A, S, M: le righe automatiche cambiano?); in A cambia il **Diaframma** con la rotella e zooma (l'elenco segue lo zoom? sul monitor della fotocamera il valore è lo stesso?); cambia **ISO**, **Compensazione**, **Tempo** in S; in **M** porta il **Tempo** a un valore lungo come `2"` o `60"` (contiene le virgolette, che l'app codifica come `&quot;`: la fotocamera deve mostrare il tempo giusto e il pannello deve confermarlo, altrimenti va inviato il carattere senza codifica); **Bilanciamento** (i nomi coincidono con quelli della fotocamera?); **Scatto** (singolo/raffica); **ART** (Filtro e Variante compaiono? i nomi coincidono?); uno scatto con impostazioni cambiate; esci e controlla se la fotocamera torna a seguire la ghiera fisica.
 
 - [ ] **Step 2: Annota l'esito**
 
