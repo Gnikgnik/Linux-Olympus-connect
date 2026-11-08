@@ -275,8 +275,14 @@ class OlympusClient:
 
     def set_prop(self, name: str, value: str) -> None:
         """Imposta una proprietà. Formato verificato il 2026-11-08; la risposta
-        non dice l'esito, che si legge rileggendo l'elenco."""
-        corpo = f'<?xml version="1.0"?><set><value>{escape(value, {chr(34): "&quot;"})}</value></set>'
+        non dice l'esito, che si legge rileggendo l'elenco.
+
+        Le virgolette dei tempi lunghi (60") partono così come sono: nel testo
+        di un elemento sono XML valido e il corpo verificato non conteneva mai
+        entità. Solo & < > diventano entità, perché il corpo resti ben formato
+        (nei valori della fotocamera non compaiono). Quale forma accetti la
+        fotocamera per 60" è da verificare sul campo."""
+        corpo = f'<?xml version="1.0"?><set><value>{escape(value)}</value></set>'
         log.debug("set_camprop %s=%s", name, value)
         self._post_ok("set_camprop.cgi", corpo.encode(), com="set", propname=name)
 

@@ -459,11 +459,21 @@ def test_set_prop_posts_the_verified_body(requests_mock):
     assert richiesta.body == b'<?xml version="1.0"?><set><value>250</value></set>'
 
 
-def test_set_prop_escapes_the_value(requests_mock):
+def test_set_prop_sends_the_quote_of_long_times_raw(requests_mock):
+    # nel testo di un elemento XML le virgolette sono valide così; il formato
+    # verificato non conteneva mai entità (quale forma accetti la fotocamera
+    # lo dirà la prova sul campo)
     requests_mock.post(f"{BASE_URL}/set_camprop.cgi", content=b"")
     OlympusClient().set_prop("shutspeedvalue", '60"')
     assert requests_mock.last_request.body == (
-        b'<?xml version="1.0"?><set><value>60&quot;</value></set>')
+        b'<?xml version="1.0"?><set><value>60"</value></set>')
+
+
+def test_set_prop_keeps_the_body_well_formed(requests_mock):
+    requests_mock.post(f"{BASE_URL}/set_camprop.cgi", content=b"")
+    OlympusClient().set_prop("x", "a&b<c>")
+    assert requests_mock.last_request.body == (
+        b'<?xml version="1.0"?><set><value>a&amp;b&lt;c&gt;</value></set>')
 
 
 def test_set_prop_refusal_has_the_code(requests_mock):
