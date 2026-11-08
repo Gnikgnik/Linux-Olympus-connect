@@ -489,3 +489,68 @@ def test_set_prop_unreachable_camera(requests_mock):
     requests_mock.post(f"{BASE_URL}/set_camprop.cgi", exc=_requests.exceptions.ConnectionError)
     with pytest.raises(CameraNotReachable):
         OlympusClient().set_prop("isospeedvalue", "250")
+
+
+# --- pose lunghe -------------------------------------------------------------------
+
+def test_take_picture_waits_the_given_read_timeout_for_starttake(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi",
+                      content=b"<response><take>ok</take></response>")
+    OlympusClient().take_picture(read_timeout=135.0)
+    avvio, stop = requests_mock.request_history
+    assert avvio.qs["com"] == ["starttake"] and avvio.timeout == (3, 135.0)
+    assert stop.qs["com"] == ["stoptake"] and stop.timeout == (3, 15)
+
+
+def test_take_picture_default_timeout_is_the_usual_one(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi",
+                      content=b"<response><take>ok</take></response>")
+    OlympusClient().take_picture()
+    assert [r.timeout for r in requests_mock.request_history] == [(3, 15), (3, 15)]
+
+
+def test_other_requests_keep_the_usual_timeout(requests_mock):
+    requests_mock.get(f"{BASE_URL}/switch_cammode.cgi", content=b"")
+    OlympusClient().ensure_play_mode()
+    assert requests_mock.last_request.timeout == (3, 15)
+
+
+def _per_com(risposte):
+    """Risposta per valore di com: un'eccezione da sollevare o un corpo."""
+    def rispondi(request, context):
+        risposta = risposte[request.qs["com"][0]]
+        if isinstance(risposta, Exception):
+            raise risposta
+        return risposta
+    return rispondi
+
+
+def test_stoptake_follows_a_starttake_that_timed_out(requests_mock):
+    from olympus_connect.core.errors import CameraAsleep
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", content=_per_com({
+        "starttake": requests.exceptions.ReadTimeout(),
+        "stoptake": b"",
+    }))
+    with pytest.raises(CameraAsleep):
+        OlympusClient().take_picture(read_timeout=31.0)
+    assert [r.qs["com"] for r in requests_mock.request_history] == [["starttake"], ["stoptake"]]
+
+
+def test_a_failing_stoptake_does_not_mask_the_starttake_error(requests_mock):
+    from olympus_connect.core.errors import CameraAsleep
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", content=_per_com({
+        "starttake": requests.exceptions.ReadTimeout(),
+        "stoptake": requests.exceptions.ConnectionError(),
+    }))
+    with pytest.raises(CameraAsleep):
+        OlympusClient().take_picture()
+    assert len(requests_mock.request_history) == 2
+
+
+def test_a_failing_stoptake_after_a_good_starttake_is_reported(requests_mock):
+    requests_mock.get(f"{BASE_URL}/exec_takemotion.cgi", content=_per_com({
+        "starttake": b"<response><take>ok</take></response>",
+        "stoptake": requests.exceptions.ConnectionError(),
+    }))
+    with pytest.raises(CameraNotReachable):
+        OlympusClient().take_picture()

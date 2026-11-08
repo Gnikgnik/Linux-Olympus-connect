@@ -71,12 +71,16 @@ class OlympusClient:
     # -- livello trasporto ------------------------------------------------
 
     def _get(self, path: str, *, stream: bool = False,
-             headers: dict[str, str] | None = None, **params) -> requests.Response:
+             headers: dict[str, str] | None = None,
+             read_timeout: float | None = None, **params) -> requests.Response:
+        """read_timeout sostituisce l'attesa della risposta (15 s); la
+        connessione resta a 3 s."""
         url = f"{self.base_url}/{path.lstrip('/')}"
+        attesa = TIMEOUT if read_timeout is None else (TIMEOUT[0], read_timeout)
         try:
             return self._session.get(
                 url, headers={**HEADERS, **(headers or {})},
-                params=params, timeout=TIMEOUT, stream=stream,
+                params=params, timeout=attesa, stream=stream,
             )
         except requests.exceptions.ConnectionError as exc:
             raise CameraNotReachable(
@@ -98,8 +102,9 @@ class OlympusClient:
             )
         return response
 
-    def _get_ok(self, path: str, **params) -> requests.Response:
-        return self._check(path, self._get(path, **params))
+    def _get_ok(self, path: str, *, read_timeout: float | None = None,
+                **params) -> requests.Response:
+        return self._check(path, self._get(path, read_timeout=read_timeout, **params))
 
     def _post_ok(self, path: str, body: bytes, **params) -> requests.Response:
         url = f"{self.base_url}/{path.lstrip('/')}"
@@ -300,10 +305,24 @@ class OlympusClient:
     def release_af(self) -> None:
         self._get_ok("exec_takemotion.cgi", com="releaseafframe")
 
-    def take_picture(self) -> None:
+    def take_picture(self, read_timeout: float | None = None) -> None:
         """Scatta. Solo con il live acceso. stoptake segue sempre starttake,
-        anche quando la fotocamera dice che lo scatto non è riuscito."""
-        response = self._get_ok("exec_takemotion.cgi", com="starttake")
+        anche quando la fotocamera dice che lo scatto non è riuscito e
+        anche quando starttake fallisce.
+
+        starttake risponde solo a posa finita, riduzione rumore compresa
+        (con 60" sul campo: 129 s): `read_timeout` è quanto aspettarla, da
+        camprops.shot_timeout; None vale l'attesa solita di 15 s. Se starttake
+        è già fallito, un errore di stoptake non copre quello originale."""
+        try:
+            response = self._get_ok("exec_takemotion.cgi", com="starttake",
+                                    read_timeout=read_timeout)
+        except Exception:
+            try:
+                self._get_ok("exec_takemotion.cgi", com="stoptake")
+            except Exception as exc:
+                log.debug("stoptake dopo uno starttake fallito: %s", exc)
+            raise
         self._get_ok("exec_takemotion.cgi", com="stoptake")
         esito = _xml_text(response.content, "take")
         if esito is not None and esito != "ok":
