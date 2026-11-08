@@ -197,3 +197,24 @@ def test_arm_without_a_camera_port_targets_the_byte_swapped_port(qapp):
         worker.stop()
         thread.quit()
         thread.wait(2000)
+
+
+def test_lens_limits_are_signalled_when_they_change(qapp, live):
+    import struct
+    from tests.live_helpers import rtp_header
+    make, fotocamera = live
+    worker, eventi, destinazione = make()
+    limiti = []
+    worker.lens_changed.connect(limiti.append)
+
+    def fotogramma(seq, minimo):
+        jpeg = _jpeg(40)
+        tlvs = [(9, struct.pack(">III", 220, minimo, minimo)),
+                (26, struct.pack(">II", 40, 30) + b"\x00" * 16)]
+        return rtp_header(seq, 0, marker=True, tlvs=tlvs) + jpeg
+
+    fotocamera.sendto(fotogramma(1, 35), destinazione)
+    fotocamera.sendto(fotogramma(2, 35), destinazione)
+    fotocamera.sendto(fotogramma(3, 56), destinazione)
+    assert _attendi(qapp, lambda: len(limiti) == 2)
+    assert limiti == [(3.5, 22.0), (5.6, 22.0)]

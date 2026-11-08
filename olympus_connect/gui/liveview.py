@@ -47,6 +47,7 @@ class LiveViewWorker(QObject):
     stalled = pyqtSignal()
     no_signal = pyqtSignal()
     resumed = pyqtSignal()
+    lens_changed = pyqtSignal(object)     # tuple[float, float] | None
 
     def __init__(self, camera: tuple[str, int | None] = CAMERA_LIVE, bind_host: str = "",
                  stall_after: float = 2.0, no_signal_after: float = 3.0,
@@ -123,6 +124,7 @@ class LiveViewWorker(QObject):
         ultimo: float | None = None
         fermo = muto = False
         visto: float | None = None
+        limiti_visti: tuple | None = None
         while not self._stop.is_set():
             try:
                 dati, _origine = sock.recvfrom(65535)
@@ -141,6 +143,9 @@ class LiveViewWorker(QObject):
                             fermo = muto = False
                         ultimo = adesso
                         self._deliver(immagine)
+                        if assembler.lens_limits != limiti_visti:
+                            limiti_visti = assembler.lens_limits
+                            self.lens_changed.emit(limiti_visti)
             armato = self._armed_at
             if armato != visto:
                 fermo = muto = False

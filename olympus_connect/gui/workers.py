@@ -287,6 +287,8 @@ class RemoteWorker(QObject):
     movie_stopped = pyqtSignal()
     left = pyqtSignal()
     failed = pyqtSignal(str)
+    props_read = pyqtSignal(object)       # dict[str, CameraProp]
+    props_failed = pyqtSignal(str)
 
     def __init__(self, client, quality: str = LIVE_QUALITY) -> None:
         super().__init__()
@@ -360,6 +362,22 @@ class RemoteWorker(QObject):
         self._recording = False
         self._movie_attempted = False
         self.movie_stopped.emit()
+
+    @pyqtSlot()
+    def read_props(self) -> None:
+        try:
+            self.props_read.emit(self._client.camera_props())
+        except Exception as exc:
+            self.props_failed.emit(describe_error(exc))
+
+    @pyqtSlot(str, str)
+    def set_prop(self, name: str, value: str) -> None:
+        """Rilegge sempre: anche dopo un rifiuto il pannello torna al valore vero."""
+        try:
+            self._client.set_prop(name, value)
+        except Exception as exc:
+            self.failed.emit(describe_error(exc))
+        self.read_props()
 
     @pyqtSlot()
     def leave(self) -> None:

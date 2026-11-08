@@ -744,3 +744,54 @@ def test_remote_client_without_commands_connects_first(qapp):
     worker, _ev = _remote(client)
     worker.enter("1024x0768", 1)
     assert client.calls[0] == ("connect",)
+
+
+# --- impostazioni ------------------------------------------------------------------
+
+class _PropsClient(_RemoteClient):
+    def __init__(self, fail=None, props=None):
+        super().__init__(fail=fail)
+        self.props = props or {"isospeedvalue": "200"}
+
+    def camera_props(self):
+        self._call("camera_props")
+        return dict(self.props)
+
+    def set_prop(self, name, value):
+        self._call("set_prop", name, value)
+        self.props[name] = value
+
+
+def _props_worker(client):
+    worker, ev = _remote(client)
+    ev["props"], ev["props_failed"] = [], []
+    worker.props_read.connect(ev["props"].append)
+    worker.props_failed.connect(ev["props_failed"].append)
+    return worker, ev
+
+
+def test_read_props_emits_the_list(qapp):
+    worker, ev = _props_worker(_PropsClient())
+    worker.read_props()
+    assert ev["props"] == [{"isospeedvalue": "200"}]
+
+
+def test_set_prop_always_rereads(qapp):
+    client = _PropsClient()
+    worker, ev = _props_worker(client)
+    worker.set_prop("isospeedvalue", "250")
+    assert [c[0] for c in client.calls] == ["set_prop", "camera_props"]
+    assert ev["props"] == [{"isospeedvalue": "250"}]
+
+
+def test_refused_set_prop_reports_and_still_rereads(qapp):
+    client = _PropsClient(fail={"set_prop": ProtocolError("x", code=1003)})
+    worker, ev = _props_worker(client)
+    worker.set_prop("isospeedvalue", "250")
+    assert ev["failed"] and ev["props"] == [{"isospeedvalue": "200"}]
+
+
+def test_failed_read_reports_props_failed(qapp):
+    worker, ev = _props_worker(_PropsClient(fail={"camera_props": CameraNotReachable("x")}))
+    worker.read_props()
+    assert ev["props"] == [] and ev["props_failed"]
