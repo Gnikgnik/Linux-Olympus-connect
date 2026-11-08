@@ -174,3 +174,14 @@ def test_automatic_rows_say_so_and_keep_the_value_column(qapp):
     assert s._value.text() == "f/3,5"
     assert s._value.geometry().x() == x_auto
     s.hide()
+
+
+def test_clear_forgets_rows_and_lens_limits(qapp):
+    sezione = PropsSection()
+    sezione.set_lens_limits((3.5, 5.6))
+    sezione.set_props(parse_desclist((REMOTE / "desclist_A.xml").read_bytes()))
+    assert sezione.names()
+    sezione.clear()
+    assert sezione.names() == [] and sezione.message() == ""
+    sezione.set_props(parse_desclist((REMOTE / "desclist_A.xml").read_bytes()))
+    assert "1.0" in sezione.row("focalvalue").menu_values()

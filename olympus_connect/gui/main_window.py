@@ -1015,6 +1015,7 @@ class MainWindow(QMainWindow):
         self._inspector.set_title("Telecomando")
         self._remote_view.clear()
         self._remote_view.show_message("Collegamento al live…")
+        self._remote_panel.props.clear()
         self._remote_panel.set_recording(False)
         self._remote_panel.set_busy(True)
         for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
@@ -1070,7 +1071,8 @@ class MainWindow(QMainWindow):
         self._remote_panel.set_busy(False)
         self._remote_view.set_touch_area(area)
         self.statusBar().showMessage("Telecomando attivo.")
-        self.remote_read_props.emit()
+        if not (self._remote_leaving or self._closing):
+            self.remote_read_props.emit()
 
     @pyqtSlot()
     def on_live_frame(self) -> None:

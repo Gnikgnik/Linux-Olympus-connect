@@ -208,13 +208,23 @@ class PropsSection(QWidget):
             self._rows["focalvalue"].set_allowed(aperture_allowed(self._limits))
 
     def set_unavailable(self, message: str) -> None:
+        self._drop_rows()
+        self._message.setText(message)
+        self._message.show()
+
+    def clear(self) -> None:
+        """Nuova sessione del telecomando: niente righe né limiti di quella prima."""
+        self._drop_rows()
+        self._limits = None
+        self._message.setText("")
+        self._message.hide()
+
+    def _drop_rows(self) -> None:
         for riga in self._rows.values():
             self._rows_box.removeWidget(riga)
             riga.deleteLater()
         self._rows.clear()
         self._order = []
-        self._message.setText(message)
-        self._message.show()
 
     def set_lens_limits(self, limits: tuple[float, float] | None) -> None:
         self._limits = limits

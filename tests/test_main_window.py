@@ -1145,3 +1145,33 @@ def test_failed_read_shows_unavailable(props_win, qapp, monkeypatch):
     win = props_win
     win._view_remote.click()
     assert _attendi(qapp, lambda: win._remote_panel.props.message() != "")
+
+
+def test_reentering_starts_without_the_old_settings(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("focalvalue") is not None)
+    _FakeLive.istanze[-1].lens_changed.emit((3.5, 22.0))
+    assert _attendi(qapp, lambda: "1.0" not in win._remote_panel.props.row("focalvalue").menu_values())
+    win._view_grid.click()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert _attendi(qapp, win._view_remote.isEnabled, 5.0)   # la scheda è stata riletta
+    win._view_remote.click()
+    assert win._remote_active
+    assert win._remote_panel.props.names() == []      # niente righe della sessione prima
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("focalvalue") is not None)
+    assert "1.0" in win._remote_panel.props.row("focalvalue").menu_values()
+
+
+def test_no_read_is_sent_when_entered_arrives_while_leaving(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_entered)
+    assert _attendi(qapp, lambda: ("camera_props",) in _RecordingClient.chiamate)
+    letture = _RecordingClient.chiamate.count(("camera_props",))
+    win._remote_leaving = True
+    try:
+        win.on_remote_entered("A", None)
+        assert not _attendi(qapp, lambda: _RecordingClient.chiamate.count(("camera_props",)) > letture, 0.3)
+    finally:
+        win._remote_leaving = False
