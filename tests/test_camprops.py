@@ -239,8 +239,8 @@ def test_busy_is_unknown_in_iauto_and_for_live_or_missing_values():
 
 def test_shot_timeout():
     m = _con(_elenco("desclist_M.xml"), shutspeedvalue='60"')
-    assert shot_timeout(m) == pytest.approx(135.0)
-    assert shot_timeout(_con(m, noisereduction="off")) == pytest.approx(75.0)
-    assert shot_timeout(_con(m, shutspeedvalue="250")) == pytest.approx(15.004)
-    assert shot_timeout(_elenco("desclist_A.xml")) == pytest.approx(135.0)
-    assert shot_timeout({}) == pytest.approx(135.0)
+    assert shot_timeout(m) == pytest.approx(147.0)
+    assert shot_timeout(_con(m, noisereduction="off")) == pytest.approx(81.0)
+    assert shot_timeout(_con(m, shutspeedvalue="250")) == pytest.approx(15.0044)
+    assert shot_timeout(_elenco("desclist_A.xml")) == pytest.approx(150.0)
+    assert shot_timeout({}) == pytest.approx(150.0)

@@ -1242,7 +1242,7 @@ def test_a_long_exposure_shows_the_countdown(long_win, qapp):
     assert win._remote_view.message() == "Posa in corso: ancora circa 120 s"
     assert not win._remote_view._retry.isVisible()
     assert win.statusBar().currentMessage() == "Posa in corso: ancora circa 120 s"
-    assert _LongShotClient.attese == [pytest.approx(135.0)]
+    assert _LongShotClient.attese == [pytest.approx(147.0)]
     win._on_exposure_tick()
     assert win._remote_view.message() == "Posa in corso: ancora circa 119 s"
     assert win.statusBar().currentMessage() == "Posa in corso: ancora circa 119 s"

@@ -223,7 +223,8 @@ def step(values: tuple[str, ...], current: str, delta: int,
 # su. Con 2" starttake risponde dopo circa 2 s.
 
 SHOT_MARGIN = 15.0          # secondi oltre l'occupazione stimata
-SHOT_WORST_CASE = 135.0     # 60" automatico più il fotogramma scuro (129 s sul campo), più margine
+SHOT_SLACK = 1.1            # più 10 %: 60" più fotogramma scuro misurato in 129 s, stimato 120
+SHOT_WORST_CASE = 150.0     # 60" automatico più il fotogramma scuro, con lo stesso margine
 _NR_THRESHOLD = 1.0         # soglia della riduzione rumore quando l'elenco non la dà
 
 
@@ -269,9 +270,9 @@ def shot_busy_seconds(props: dict[str, CameraProp]) -> float | None:
 
 def shot_timeout(props: dict[str, CameraProp]) -> float:
     """Quanto aspettare la risposta di starttake: l'occupazione stimata più
-    15 s; senza stima il caso peggiore, 135 s (un 60" scelto dalla
+    10 % e 15 s; senza stima il caso peggiore, 150 s (un 60" scelto dalla
     fotocamera più il suo fotogramma scuro, misurato in 129 s, più margine)."""
     occupata = shot_busy_seconds(props)
     if occupata is None:
         return SHOT_WORST_CASE
-    return occupata + SHOT_MARGIN
+    return occupata * SHOT_SLACK + SHOT_MARGIN

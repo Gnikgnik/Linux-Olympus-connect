@@ -838,7 +838,7 @@ def test_a_long_exposure_is_announced_before_starttake(qapp):
     [(secondi, chiamate_prima)] = ev["exposing"]
     assert secondi == pytest.approx(120.0)
     assert "take_picture" not in [c[0] for c in chiamate_prima]
-    assert ("take_picture", pytest.approx(135.0)) in client.calls
+    assert ("take_picture", pytest.approx(147.0)) in client.calls
     assert ev["shot"] == [b"\xff\xd8rev"]
 
 
@@ -848,7 +848,7 @@ def test_a_short_shot_is_not_announced(qapp):
     worker.read_props()
     worker.shoot()
     assert ev["exposing"] == []
-    assert client.read_timeout == pytest.approx(15.004)
+    assert client.read_timeout == pytest.approx(15.0044)
 
 
 def test_an_automatic_shutter_is_not_announced_and_waits_the_worst_case(qapp):
@@ -857,14 +857,14 @@ def test_an_automatic_shutter_is_not_announced_and_waits_the_worst_case(qapp):
     worker.read_props()
     worker.shoot()
     assert ev["exposing"] == []
-    assert client.read_timeout == pytest.approx(135.0)
+    assert client.read_timeout == pytest.approx(150.0)
 
 
 def test_shooting_before_any_read_waits_the_worst_case(qapp):
     client = _ExposureClient({})
     worker, ev = _exposure_worker(client)
     worker.shoot()
-    assert ev["exposing"] == [] and client.read_timeout == pytest.approx(135.0)
+    assert ev["exposing"] == [] and client.read_timeout == pytest.approx(150.0)
 
 
 def test_the_last_read_wins(qapp):
@@ -875,4 +875,4 @@ def test_the_last_read_wins(qapp):
     worker.read_props()
     worker.shoot()
     assert [s for s, _ in ev["exposing"]] == [pytest.approx(8.0)]
-    assert client.read_timeout == pytest.approx(23.0)
+    assert client.read_timeout == pytest.approx(23.8)
