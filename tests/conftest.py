@@ -111,3 +111,23 @@ def fixture_bytes():
             pytest.skip(f"fixture {name} assente: eseguire diag.py con la fotocamera")
         return path.read_bytes()
     return _read
+
+
+@pytest.fixture(autouse=True)
+def _finestre_distrutte_nel_thread_principale():
+    """Dopo ogni test, le finestre chiuse muoiono qui e non a caso altrove.
+
+    Senza questo una finestra chiusa resta viva finché la raccolta dei rifiuti
+    di Python non la trova, e può trovarla mentre gira un thread di lavoro:
+    il C++ della finestra verrebbe distrutto fuori dal thread della GUI, con
+    un'animazione ancora registrata. Il risultato era un crash raro e casuale.
+    """
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+    if QApplication.instance() is None:
+        return
+    for finestra in QApplication.topLevelWidgets():
+        if not finestra.isVisible():
+            finestra.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
