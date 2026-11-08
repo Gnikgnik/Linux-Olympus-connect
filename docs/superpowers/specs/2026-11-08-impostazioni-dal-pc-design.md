@@ -29,9 +29,14 @@ Dall'elenco `get_camprop.cgi?com=desc&propname=desclist` registrato il 2026-11-0
 | `ArtEffectType<Filtro>` | sì | `Type1 Type2` (alcuni anche `Type3`) |
 | `SceneSub` | sì | `Portrait ePortrait LandscapeAndPerson NightViewPerson NightView NightBlastOffFirework NightLiveComposit Landscape Sunset BeachAndSnow HDRShooting Candle SilentShooting` |
 
-La prova del 2026-11-08 (P, A, S, M) ha mostrato che la fotocamera tiene valori separati per ogni modalità, che in P, A, M l'elenco del tempo comincia con `livecomp livetime livebulb` (58 valori; 55 in S) e che in M `expcomp` ha il solo valore `0.0`. La scala del diaframma (`1.0 … 91`) non è quella dell'obiettivo e i valori fuori obiettivo (per esempio `focalvalue=1.0` col 12-32) vengono accettati senza errore: la parte 2 deve limitare il diaframma alla gamma dell'obiettivo (da determinare).
+La prova del 2026-11-08 (P, A, S, M) ha mostrato che la fotocamera tiene valori separati per ogni modalità, che in P, A, M l'elenco del tempo comincia con `livecomp livetime livebulb` (58 valori; 55 in S) e che in M `expcomp` ha il solo valore `0.0`. La scala del diaframma (`1.0 … 91`) non è quella dell'obiettivo e i valori fuori obiettivo (per esempio `focalvalue=1.0` col 12-32) vengono accettati senza errore: la parte 2 limita il diaframma alla gamma dell'obiettivo, che il live dichiara (vedi sotto).
 
-Dalla lista dei comandi: `set_camprop.cgi` usa **POST** con `com=set` e `propname`; il corpo non è dichiarato. Dal protocollo OPC il formato atteso è `<?xml version="1.0"?><set><value>VALORE</value></set>`. **Non verificato.**
+Dalla lista dei comandi: `set_camprop.cgi` usa **POST** con `com=set` e `propname`; il corpo non è dichiarato. Il formato del protocollo OPC, `<?xml version="1.0"?><set><value>VALORE</value></set>`, è stato **verificato** dalla prova del 2026-11-08 (vedi «Cancello»).
+
+**Limiti dell'obiettivo nel live (prova dello zoom del 2026-11-08, LUMIX G VARIO 12-32 f/3,5–5,6).** Nell'estensione RTP del primo pacchetto di ogni fotogramma (stesso formato a TLV del pezzo C):
+- **TLV 9** = tre uint32 big endian, in decimi di f-stop: `[diaframma più chiuso, diaframma più aperto alla focale attuale, idem]`. Misurato: `[220, 35, 35]` a 12 mm, `[220, 46, 46]` a 20 mm, `[220, 56, 56]` a 32 mm: f/22 e f/3,5 → f/5,6, e il secondo valore segue lo zoom in tempo reale;
+- **TLV 18** = tre uint32, ciascuno due uint16 (alto, basso): la seconda parola è `(focale attuale, focale massima)` in mm (`(12, 32)` … `(32, 32)`); la prima vale `(8, 12)`, con 12 = focale minima.
+Il selettore del diaframma usa quindi solo i valori dell'elenco compresi fra `TLV9[1]/10` e `TLV9[0]/10` (tolleranza 0,05), aggiornati mentre si zooma.
 
 Dal pezzo C: i comandi della modalità scatto si mandano con il live acceso; la fotocamera risponde agli errori con HTTP 520 e `<errorcode>`.
 
