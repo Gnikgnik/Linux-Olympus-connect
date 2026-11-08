@@ -160,6 +160,24 @@ def is_automatic(name: str, props: dict[str, CameraProp]) -> bool:
     return name in _AUTOMATIC_BY_MODE.get(modo, EXPOSURE if name != "takemode" else ())
 
 
+# Valori per cui il percorso di scatto (starttake e subito stoptake) non è
+# stato costruito, e che la prova del 2026-11-08 non ha mai usato apposta:
+# le pose Live (Live Composite, Live Time, Live Bulb) e ogni autoscatto.
+# Non compaiono nell'elenco e i passi li saltano; se la fotocamera è già su
+# uno di questi (scelto sul corpo), la riga lo mostra come valore attuale e
+# il primo passo porta al valore selezionabile più vicino. I tempi lunghi
+# come 60" restano selezionabili: da verificare sul campo.
+HIDDEN: dict[str, Callable[[str], bool]] = {
+    "shutspeedvalue": lambda v: v in {"livecomp", "livetime", "livebulb"},
+    "drivemode": lambda v: "selftimer" in v,
+}
+
+
+def is_hidden(name: str, value: str) -> bool:
+    regola = HIDDEN.get(name)
+    return regola is not None and regola(value)
+
+
 def aperture_allowed(limits: tuple[float, float] | None) -> Callable[[str], bool]:
     def ammesso(value: str) -> bool:
         if limits is None:

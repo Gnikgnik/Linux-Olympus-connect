@@ -14,7 +14,8 @@ from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
 
 from ..core.camprops import (
-    CameraProp, aperture_allowed, format_value, is_automatic, label, step, visible_props,
+    CameraProp, aperture_allowed, format_value, is_automatic, is_hidden, label, step,
+    visible_props,
 )
 from . import icons, theme
 from .panels import SectionLabel
@@ -92,14 +93,15 @@ class PropStepper(QWidget):
     def step(self, delta: int) -> None:
         if self._prop is None or self._automatic or not self.isEnabled():
             return
-        nuovo = step(self._prop.values, self._shown, delta, self._allowed)
+        nuovo = step(self._prop.values, self._shown, delta, self._selectable)
         if nuovo != self._shown:
             self._shown = nuovo
             self._refresh()
             self._timer.start()
 
     def choose(self, value: str) -> None:
-        if self._prop is None or self._automatic or not self.isEnabled():
+        if (self._prop is None or self._automatic or not self.isEnabled()
+                or not self._selectable(value)):
             return
         self._shown = value
         self._refresh()
@@ -132,10 +134,16 @@ class PropStepper(QWidget):
 
     # -- lettura (test e finestra) --------------------------------------------------
 
+    def _selectable(self, value: str) -> bool:
+        """Si può scegliere: è nell'elenco, non è nascosto, è ammesso."""
+        return (self._prop is not None and value in self._prop.values
+                and not is_hidden(self._name, value)
+                and (self._allowed is None or self._allowed(value)))
+
     def menu_values(self) -> list[str]:
         if self._prop is None:
             return []
-        return [v for v in self._prop.values if self._allowed is None or self._allowed(v)]
+        return [v for v in self._prop.values if self._selectable(v)]
 
     def shown_value(self) -> str:
         return self._shown

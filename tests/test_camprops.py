@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from olympus_connect.core.camprops import (
-    CameraProp, aperture_allowed, format_value, is_automatic, label,
+    CameraProp, aperture_allowed, format_value, is_automatic, is_hidden, label,
     parse_desclist, step, visible_props,
 )
 
@@ -142,3 +142,16 @@ def test_step_from_an_out_of_range_value_goes_to_the_nearest_allowed():
     assert step(VALORI, "1.0", 1, ammesso) == "3.5"
     assert step(VALORI, "8.0", -1, ammesso) == "5.6"
     assert step(VALORI, "assente", 1, ammesso) == "3.5"
+
+
+def test_values_the_shoot_path_was_not_built_for_are_hidden():
+    for valore in ("livecomp", "livetime", "livebulb"):
+        assert is_hidden("shutspeedvalue", valore)
+    assert not is_hidden("shutspeedvalue", '60"')        # i tempi lunghi restano
+    assert not is_hidden("shutspeedvalue", "bulb")
+    autoscatti = [v for v in _elenco("desclist_M.xml")["drivemode"].values
+                  if is_hidden("drivemode", v)]
+    assert autoscatti == ["lowvib-selftimer", "customselftimer",
+                          "lowvib-customselftimer", "silent-customselftimer"]
+    assert not is_hidden("drivemode", "silent-continuous-H")
+    assert not is_hidden("isospeedvalue", "livecomp")    # la regola è per proprietà

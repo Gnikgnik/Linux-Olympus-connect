@@ -185,3 +185,29 @@ def test_clear_forgets_rows_and_lens_limits(qapp):
     assert sezione.names() == [] and sezione.message() == ""
     sezione.set_props(parse_desclist((REMOTE / "desclist_A.xml").read_bytes()))
     assert "1.0" in sezione.row("focalvalue").menu_values()
+
+
+TEMPO = CameraProp("shutspeedvalue", "livecomp",
+                   ("livecomp", "livetime", "livebulb", '60"', '30"', "125", "250"), True)
+SCATTO = CameraProp("drivemode", "normal",
+                    ("normal", "lowvib-selftimer", "customselftimer", "continuous-H"), True)
+
+
+def test_hidden_values_are_not_offered_but_the_current_one_is_shown(qapp):
+    s, _ = _stepper(TEMPO)
+    assert s.menu_values() == ['60"', '30"', "125", "250"]     # i tempi lunghi restano
+    assert s._value.text() == "Live Composite"                 # scelto sul corpo: si vede
+    s.step(-1)
+    assert s.shown_value() == '60"'                            # al più vicino selezionabile
+    s2, _ = _stepper(TEMPO)
+    s2.step(1)
+    assert s2.shown_value() == '60"'
+
+
+def test_stepping_skips_the_self_timer(qapp):
+    s, _ = _stepper(SCATTO)
+    assert s.menu_values() == ["normal", "continuous-H"]
+    s.step(1)
+    assert s.shown_value() == "continuous-H"
+    s.choose("customselftimer")                 # non è nell'elenco: ignorato
+    assert s.shown_value() == "continuous-H"
