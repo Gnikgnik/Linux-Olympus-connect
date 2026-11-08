@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         # l'avviso di live interrotto si rimanda alla fine dello scatto.
         self._shot_in_flight = False
         self._live_restart_pending = False
+        self._mode_to_restore: str | None = None
         self._live_down: str | None = None     # avviso del live rimandato, se fermo
         self._exposure_shown = False
         self._exposure_left = 0
@@ -1017,6 +1018,7 @@ class MainWindow(QMainWindow):
         self._remote_entered = False
         self._shot_in_flight = False
         self._live_restart_pending = False
+        self._mode_to_restore = None
         self._live_down = None
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
@@ -1201,6 +1203,10 @@ class MainWindow(QMainWindow):
             return
         self._remote_entered = False
         self._live_down = None           # arm() fa ripartire la sentinella del live
+        # Rientrare in rec rimette la modalità della ghiera fisica (verificato sul
+        # campo il 2026-11-08): quella scelta dal PC si rimette dopo la rilettura.
+        riga = self._remote_panel.props.row("takemode")
+        self._mode_to_restore = riga.confirmed_value() if riga is not None else None
         self._remote_panel.set_busy(True)
         self._remote_view.show_message("Collegamento al live…")
         self._live_worker.arm()
@@ -1280,6 +1286,11 @@ class MainWindow(QMainWindow):
             self.on_remote_props_failed("Elenco delle impostazioni illeggibile")
             return
         self._remote_panel.props.set_props(props)
+        voluta, self._mode_to_restore = self._mode_to_restore, None
+        modo = props.get("takemode")
+        if (voluta and modo is not None and modo.value != voluta and voluta in modo.values
+                and not self._remote_leaving and not self._closing):
+            self._remote_panel.props.change("takemode", voluta)
 
     @pyqtSlot(str)
     def on_remote_props_failed(self, message: str) -> None:
@@ -1320,6 +1331,7 @@ class MainWindow(QMainWindow):
         self._remote_leaving = False
         self._shot_in_flight = False
         self._live_down = None
+        self._mode_to_restore = None
         for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
             scorciatoia.setEnabled(False)
         self._remote_panel.set_recording(False)

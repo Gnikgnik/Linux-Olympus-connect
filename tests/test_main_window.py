@@ -1365,3 +1365,25 @@ def test_closing_during_the_exposure_stops_the_countdown(long_win, qapp):
     _LongShotClient.rilascio.set()
     win.close()
     assert not win._exposure_timer.isActive()
+
+
+def test_a_live_reentry_puts_back_the_mode_chosen_from_the_pc(props_win, qapp):
+    # sul campo: rientrare in rec rimette la modalità della ghiera fisica
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode") is not None)
+    assert _attendi(qapp, lambda: win._remote_entered)
+    win._remote_panel.props.row("takemode").choose("M")
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode").confirmed_value() == "M")
+    _PropsStubClient.valori["takemode"] = "A"          # la ghiera fisica è su A
+    win.on_live_retry()
+    assert _attendi(qapp, lambda: _RecordingClient.chiamate.count(("set_prop", "takemode", "M")) == 2)
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode").confirmed_value() == "M")
+
+
+def test_entering_the_remote_follows_the_dial(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode") is not None)
+    _attendi(qapp, lambda: False, 0.3)
+    assert not [c for c in _RecordingClient.chiamate if c[:2] == ("set_prop", "takemode")]

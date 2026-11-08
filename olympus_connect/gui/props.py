@@ -272,6 +272,11 @@ class PropsSection(QWidget):
         self._rows_box.removeWidget(riga)
         riga.deleteLater()
 
+    def change(self, name: str, value: str) -> None:
+        """Una modifica chiesta dal programma e non dall'utente (per esempio
+        rimettere la modalità dopo un rientro nel live): segue la stessa via."""
+        self._forward(name, value)
+
     def _forward(self, name: str, value: str) -> None:
         """Dopo un cambio di modalità le altre righe mostrano i valori della
         modalità vecchia (la fotocamera li tiene per modalità): restano
