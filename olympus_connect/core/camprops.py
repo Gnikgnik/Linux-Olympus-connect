@@ -166,7 +166,7 @@ def is_automatic(name: str, props: dict[str, CameraProp]) -> bool:
 # Non compaiono nell'elenco e i passi li saltano; se la fotocamera è già su
 # uno di questi (scelto sul corpo), la riga lo mostra come valore attuale e
 # il primo passo porta al valore selezionabile più vicino. I tempi lunghi
-# come 60" restano selezionabili: da verificare sul campo.
+# come 60" restano selezionabili: provati sul campo, vedi «pose lunghe».
 HIDDEN: dict[str, Callable[[str], bool]] = {
     "shutspeedvalue": lambda v: v in {"livecomp", "livetime", "livebulb"},
     "drivemode": lambda v: "selftimer" in v,
@@ -210,3 +210,68 @@ def step(values: tuple[str, ...], current: str, delta: int,
         return avanti[0] if avanti else ammessi[-1]
     indietro = [v for v in values[:pos] if v in ammessi]
     return indietro[-1] if indietro else ammessi[0]
+
+
+# -- pose lunghe ------------------------------------------------------------
+#
+# Misurato sul campo (E-M10 Mark IV, 2026-11-08, in M, riduzione rumore
+# «auto» con soglia NoiseReductionExposureTime=1"): starttake risponde dopo
+# 16,8 s con 8" e dopo 129,0 s con 60". Oltre la soglia la fotocamera
+# aggiunge un fotogramma scuro lungo quanto la posa: occupata circa il doppio
+# dell'esposizione più qualche secondo. Nel frattempo non risponde a nessuna
+# altra richiesta HTTP e il live smette di mandare pacchetti; il Wi-Fi resta
+# su. Con 2" starttake risponde dopo circa 2 s.
+
+SHOT_MARGIN = 15.0          # secondi oltre l'occupazione stimata
+SHOT_WORST_CASE = 135.0     # 60" automatico più il fotogramma scuro (129 s sul campo), più margine
+_NR_THRESHOLD = 1.0         # soglia della riduzione rumore quando l'elenco non la dà
+
+
+def exposure_seconds(value: str) -> float | None:
+    """La durata in secondi di un valore di tempo dell'elenco.
+
+    '60"' e '2.5"' sono secondi; '1.3' e '250' sono frazioni (1/1,3 s,
+    1/250 s). None per le pose Live, Bulb e ogni valore non leggibile."""
+    testo = (value or "").strip()
+    try:
+        if testo.endswith('"'):
+            secondi = float(testo[:-1])
+        else:
+            secondi = 1 / float(testo)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return secondi if secondi > 0 else None
+
+
+def shot_busy_seconds(props: dict[str, CameraProp]) -> float | None:
+    """Per quanto la fotocamera resta occupata dopo starttake, stimato.
+
+    Il tempo scelto, raddoppiato per il fotogramma scuro quando la riduzione
+    rumore non è «off» e la posa arriva alla soglia
+    NoiseReductionExposureTime. Senza la soglia nell'elenco vale 1 s; senza
+    noisereduction la si suppone attiva (il caso più lungo). None quando il
+    tempo lo decide la fotocamera (modalità P, A, iAuto…) o non è leggibile."""
+    tempo = props.get("shutspeedvalue")
+    if tempo is None or is_automatic("shutspeedvalue", props):
+        return None
+    posa = exposure_seconds(tempo.value)
+    if posa is None:
+        return None
+    rumore = props.get("noisereduction")
+    soglia_prop = props.get("NoiseReductionExposureTime")
+    soglia = exposure_seconds(soglia_prop.value) if soglia_prop is not None else None
+    if soglia is None:
+        soglia = _NR_THRESHOLD
+    if (rumore is None or rumore.value != "off") and posa >= soglia:
+        return 2 * posa
+    return posa
+
+
+def shot_timeout(props: dict[str, CameraProp]) -> float:
+    """Quanto aspettare la risposta di starttake: l'occupazione stimata più
+    15 s; senza stima il caso peggiore, 135 s (un 60" scelto dalla
+    fotocamera più il suo fotogramma scuro, misurato in 129 s, più margine)."""
+    occupata = shot_busy_seconds(props)
+    if occupata is None:
+        return SHOT_WORST_CASE
+    return occupata + SHOT_MARGIN
