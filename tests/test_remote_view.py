@@ -171,3 +171,14 @@ def test_af_pending_is_public(qapp):
     assert view.af_pending()
     view.set_af_result(False)
     assert not view.af_pending()
+
+
+def test_panel_has_the_settings_section_and_disables_it(qapp):
+    pannello = RemotePanel()
+    assert pannello.props is not None
+    pannello.set_busy(True)
+    assert pannello.props._enabled is False
+    pannello.set_busy(False)
+    assert pannello.props._enabled is True
+    pannello.set_recording(True)
+    assert pannello.props._enabled is False

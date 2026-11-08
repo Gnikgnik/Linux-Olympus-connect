@@ -80,6 +80,8 @@ class MainWindow(QMainWindow):
     remote_movie_start = pyqtSignal()
     remote_movie_stop = pyqtSignal()
     remote_leave = pyqtSignal()
+    remote_read_props = pyqtSignal()
+    remote_set_prop = pyqtSignal(str, str)
 
     def __init__(self, client_factory=OlympusClient,
                  network_factory=CameraNetwork,
@@ -153,6 +155,7 @@ class MainWindow(QMainWindow):
         self._remote_view.retry_requested.connect(self.on_live_retry)
         self._remote_panel.shoot_requested.connect(self.on_remote_shoot)
         self._remote_panel.movie_toggle_requested.connect(self.on_remote_movie_toggle)
+        self._remote_panel.props.prop_changed.connect(self.on_remote_prop_changed)
 
         self._shortcut_shoot = QShortcut(QKeySequence("Space"), self)
         self._shortcut_shoot.activated.connect(self.on_remote_shoot)
@@ -1026,6 +1029,8 @@ class MainWindow(QMainWindow):
         remote.movie_stopped.connect(self.on_remote_movie_stopped)
         remote.left.connect(self.on_remote_left)
         remote.failed.connect(self.on_remote_failed)
+        remote.props_read.connect(self.on_remote_props)
+        remote.props_failed.connect(self.on_remote_props_failed)
         coda = Qt.ConnectionType.QueuedConnection
         self.remote_enter.connect(remote.enter, coda)
         self.remote_focus.connect(remote.focus, coda)
@@ -1033,12 +1038,15 @@ class MainWindow(QMainWindow):
         self.remote_movie_start.connect(remote.start_movie, coda)
         self.remote_movie_stop.connect(remote.stop_movie, coda)
         self.remote_leave.connect(remote.leave, coda)
+        self.remote_read_props.connect(remote.read_props, coda)
+        self.remote_set_prop.connect(remote.set_prop, coda)
 
         live = self._live_factory()
         live.listening.connect(self.on_live_listening)
         live.frame_ready.connect(self.on_live_frame)
         live.stalled.connect(self.on_live_stalled)
         live.no_signal.connect(self.on_live_no_signal)
+        live.lens_changed.connect(self.on_lens_changed)
 
         self._remote_worker = remote
         self._live_worker = live
@@ -1062,6 +1070,7 @@ class MainWindow(QMainWindow):
         self._remote_panel.set_busy(False)
         self._remote_view.set_touch_area(area)
         self.statusBar().showMessage("Telecomando attivo.")
+        self.remote_read_props.emit()
 
     @pyqtSlot()
     def on_live_frame(self) -> None:
@@ -1157,6 +1166,30 @@ class MainWindow(QMainWindow):
         if not self._remote_entered or not self._remote_view.has_frame():
             self._remote_view.show_message(message, retry=True)
 
+    @pyqtSlot(object)
+    def on_remote_props(self, props: object) -> None:
+        if not self._remote_active:
+            return
+        self._remote_panel.props.set_props(props)
+
+    @pyqtSlot(str)
+    def on_remote_props_failed(self, message: str) -> None:
+        if not self._remote_active:
+            return
+        self._remote_panel.props.set_unavailable("Impostazioni non disponibili")
+        self.statusBar().showMessage(message)
+
+    @pyqtSlot(object)
+    def on_lens_changed(self, limits: object) -> None:
+        self._remote_panel.props.set_lens_limits(limits)
+
+    def on_remote_prop_changed(self, name: str, value: str) -> None:
+        if (not self._remote_active or self._remote_leaving or self._closing
+                or not self._remote_entered or self._remote_panel.is_recording()):
+            return
+        self.statusBar().showMessage("Impostazione inviata alla fotocamera…", 2000)
+        self.remote_set_prop.emit(name, value)
+
     def exit_remote(self, view: str) -> None:
         if not self._remote_active or self._remote_leaving:
             return
@@ -1205,7 +1238,8 @@ class MainWindow(QMainWindow):
             self._live_worker.stop()
         workers = [self._remote_worker, self._live_worker]
         for segnale in (self.remote_enter, self.remote_focus, self.remote_shoot,
-                        self.remote_movie_start, self.remote_movie_stop, self.remote_leave):
+                        self.remote_movie_start, self.remote_movie_stop, self.remote_leave,
+                        self.remote_read_props, self.remote_set_prop):
             try:
                 segnale.disconnect()
             except TypeError:

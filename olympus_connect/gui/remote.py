@@ -13,12 +13,12 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
-    QGridLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from . import icons, theme
 from .panels import SectionLabel
-from .shot import label_column_width
+from .props import PropsSection
 
 AF_BOX = 56          # lato del riquadro di messa a fuoco a schermo, in pixel
 
@@ -290,18 +290,9 @@ class RemotePanel(QWidget):
         colonna.addWidget(self._elapsed_label)
 
         colonna.addSpacing(8)
-        colonna.addWidget(SectionLabel("Fotocamera"))
-        griglia = QGridLayout()
-        griglia.setContentsMargins(0, 0, 0, 0)
-        griglia.setHorizontalSpacing(10)
-        griglia.setColumnStretch(1, 1)
-        griglia.setColumnMinimumWidth(0, label_column_width())
-        modalita = QLabel("Modalità")
-        modalita.setObjectName("faint")
-        griglia.addWidget(modalita, 0, 0)
-        self._take_mode = _value("—")
-        griglia.addWidget(self._take_mode, 0, 1)
-        colonna.addLayout(griglia)
+        self.props = PropsSection()
+        colonna.addWidget(self.props)
+        self._take_mode_text = "—"
 
         suggerimento = QLabel("Clic sull'immagine per mettere a fuoco.")
         suggerimento.setObjectName("faint")
@@ -318,10 +309,10 @@ class RemotePanel(QWidget):
         self._refresh()
 
     def set_take_mode(self, mode: str) -> None:
-        self._take_mode.setText(mode or "—")
+        self._take_mode_text = mode or "—"
 
     def take_mode_text(self) -> str:
-        return self._take_mode.text()
+        return self._take_mode_text
 
     def set_recording(self, recording: bool) -> None:
         self._recording = recording
@@ -359,3 +350,4 @@ class RemotePanel(QWidget):
         self._elapsed_label.setText(self.elapsed_text())
         self._shoot.setEnabled(not self._busy and not self._recording)
         self._movie.setEnabled(not self._busy)
+        self.props.set_enabled(not self._busy and not self._recording)

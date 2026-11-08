@@ -711,6 +711,7 @@ class _FakeLive(QObject):
     stalled = pyqtSignal()
     no_signal = pyqtSignal()
     resumed = pyqtSignal()
+    lens_changed = pyqtSignal(object)
     istanze: list = []
 
     def __init__(self):
@@ -1063,3 +1064,84 @@ def test_commands_stay_disabled_when_entering_fails(qapp, settings):
         assert ("take_picture",) not in _RecordingClient.chiamate
     finally:
         win.close()
+
+
+# --- impostazioni dal PC ------------------------------------------------------------
+
+from olympus_connect.core.camprops import parse_desclist  # noqa: E402
+
+_DESCLIST = (Path(__file__).parent / "fixtures" / "remote" / "desclist_A.xml").read_bytes()
+
+
+class _PropsStubClient(_RemoteStubClient):
+    valori: dict = {}
+
+    def camera_props(self):
+        _RecordingClient.chiamate.append(("camera_props",))
+        props = parse_desclist(_DESCLIST)
+        for nome, valore in _PropsStubClient.valori.items():
+            p = props[nome]
+            props[nome] = type(p)(p.name, valore, p.values, p.settable)
+        return props
+
+    def set_prop(self, name, value):
+        _RecordingClient.chiamate.append(("set_prop", name, value))
+        _PropsStubClient.valori[name] = value
+
+
+@pytest.fixture
+def props_win(qapp, settings):
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    _PropsStubClient.valori = {}
+    _RemoteStubClient.revisione = _jpeg_valido()
+    win = MainWindow(client_factory=_PropsStubClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive)
+    win.resize(1200, 700)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    yield win
+    win.close()
+
+
+def test_entering_reads_the_settings(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("isospeedvalue") is not None)
+    assert win._remote_panel.props.row("isospeedvalue").confirmed_value() == "200"
+
+
+def test_a_change_reaches_the_camera_and_is_confirmed(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("isospeedvalue") is not None)
+    win._remote_panel.props.row("isospeedvalue").step(1)
+    assert _attendi(qapp, lambda: ("set_prop", "isospeedvalue", "250") in _RecordingClient.chiamate)
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("isospeedvalue").confirmed_value() == "250")
+
+
+def test_settings_are_disabled_while_recording(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("isospeedvalue") is not None)
+    win._remote_panel._movie.click()
+    assert _attendi(qapp, win._remote_panel.is_recording)
+    assert not win._remote_panel.props.row("isospeedvalue").isEnabled()
+
+
+def test_lens_limits_reach_the_aperture_row(props_win, qapp):
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("focalvalue") is not None)
+    _FakeLive.istanze[-1].lens_changed.emit((3.5, 22.0))
+    assert _attendi(qapp, lambda: "1.0" not in win._remote_panel.props.row("focalvalue").menu_values())
+
+
+def test_failed_read_shows_unavailable(props_win, qapp, monkeypatch):
+    def rompi(self):
+        raise RuntimeError("x")
+    monkeypatch.setattr(_PropsStubClient, "camera_props", rompi)
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.message() != "")
