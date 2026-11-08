@@ -13,9 +13,11 @@ import xml.etree.ElementTree as ElementTree
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterator
+from xml.sax.saxutils import escape
 
 import requests
 
+from .camprops import CameraProp, parse_desclist
 from .errors import CameraAsleep, CameraNotReachable, OlympusError, ProtocolError
 from .model import CHUNK_SIZE, MediaFile, parse_imglist
 
@@ -85,8 +87,7 @@ class OlympusClient:
                 "La fotocamera non ha risposto entro il tempo previsto."
             ) from exc
 
-    def _get_ok(self, path: str, **params) -> requests.Response:
-        response = self._get(path, **params)
+    def _check(self, path: str, response: requests.Response) -> requests.Response:
         if response.status_code != 200:
             trovato = _ERRORCODE.search(response.content or b"")
             codice = int(trovato.group(1)) if trovato else None
@@ -96,6 +97,20 @@ class OlympusClient:
                 response.content, code=codice,
             )
         return response
+
+    def _get_ok(self, path: str, **params) -> requests.Response:
+        return self._check(path, self._get(path, **params))
+
+    def _post_ok(self, path: str, body: bytes, **params) -> requests.Response:
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        try:
+            response = self._session.post(url, headers=HEADERS, params=params,
+                                          data=body, timeout=TIMEOUT)
+        except requests.exceptions.ConnectionError as exc:
+            raise CameraNotReachable("La fotocamera non risponde su 192.168.0.10.") from exc
+        except requests.exceptions.Timeout as exc:
+            raise CameraAsleep("La fotocamera non ha risposto entro il tempo previsto.") from exc
+        return self._check(path, response)
 
     @staticmethod
     def _xml(response: requests.Response) -> ElementTree.Element:
@@ -252,6 +267,18 @@ class OlympusClient:
                 return x, y, w, h
         log.debug("touchactiveframe: nessun valore utilizzabile")
         return None
+
+    def camera_props(self) -> dict[str, CameraProp]:
+        """Tutte le impostazioni con valore, valori ammessi e modificabilità."""
+        return parse_desclist(
+            self._get_ok("get_camprop.cgi", com="desc", propname="desclist").content)
+
+    def set_prop(self, name: str, value: str) -> None:
+        """Imposta una proprietà. Formato verificato il 2026-11-08; la risposta
+        non dice l'esito, che si legge rileggendo l'elenco."""
+        corpo = f'<?xml version="1.0"?><set><value>{escape(value, {chr(34): "&quot;"})}</value></set>'
+        log.debug("set_camprop %s=%s", name, value)
+        self._post_ok("set_camprop.cgi", corpo.encode(), com="set", propname=name)
 
     def assign_af(self, x: int, y: int) -> bool | None:
         """Mette a fuoco nel punto (x, y) del live. Solo con il live acceso.

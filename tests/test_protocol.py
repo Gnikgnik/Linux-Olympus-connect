@@ -437,3 +437,45 @@ def test_enter_rec_mode_logs_the_quality(requests_mock, caplog):
     with caplog.at_level("DEBUG", logger="olympus_connect.remote"):
         OlympusClient().enter_rec_mode("1024x0768")
     assert "1024x0768" in caplog.text
+
+
+# --- impostazioni ------------------------------------------------------------------
+
+def test_camera_props_reads_the_real_desclist(requests_mock):
+    requests_mock.get(f"{BASE_URL}/get_camprop.cgi",
+                      content=(REMOTE / "camprop_desclist.xml").read_bytes())
+    props = OlympusClient().camera_props()
+    assert props["isospeedvalue"].value == "200"
+    assert requests_mock.last_request.qs == {"com": ["desc"], "propname": ["desclist"]}
+
+
+def test_set_prop_posts_the_verified_body(requests_mock):
+    requests_mock.post(f"{BASE_URL}/set_camprop.cgi",
+                       content=b'<?xml version="1.0"?><response/>')
+    OlympusClient().set_prop("isospeedvalue", "250")
+    richiesta = requests_mock.last_request
+    assert richiesta.method == "POST"
+    assert richiesta.qs == {"com": ["set"], "propname": ["isospeedvalue"]}
+    assert richiesta.body == b'<?xml version="1.0"?><set><value>250</value></set>'
+
+
+def test_set_prop_escapes_the_value(requests_mock):
+    requests_mock.post(f"{BASE_URL}/set_camprop.cgi", content=b"")
+    OlympusClient().set_prop("shutspeedvalue", '60"')
+    assert requests_mock.last_request.body == (
+        b'<?xml version="1.0"?><set><value>60&quot;</value></set>')
+
+
+def test_set_prop_refusal_has_the_code(requests_mock):
+    requests_mock.post(f"{BASE_URL}/set_camprop.cgi", status_code=520,
+                       content=b'<?xml version="1.0"?><errorcode>1003</errorcode>')
+    with pytest.raises(ProtocolError) as info:
+        OlympusClient().set_prop("isospeedvalue", "250")
+    assert info.value.code == 1003
+
+
+def test_set_prop_unreachable_camera(requests_mock):
+    import requests as _requests
+    requests_mock.post(f"{BASE_URL}/set_camprop.cgi", exc=_requests.exceptions.ConnectionError)
+    with pytest.raises(CameraNotReachable):
+        OlympusClient().set_prop("isospeedvalue", "250")

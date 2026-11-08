@@ -133,3 +133,36 @@ def test_stale_backlog_then_a_jump_in_sequence_is_handled():
     pacchetti = frame_packets(vecchio, seq=10)[:2] + frame_packets(nuovo, seq=2000)
     assembler = FrameAssembler()
     assert [f for f in map(assembler.feed, pacchetti) if f] == [nuovo]
+
+
+# --- limiti dell'obiettivo (TLV 9) ------------------------------------------------
+
+def _con_tlv9(massimo, minimo):
+    return rtp_header(1, 0, marker=True, tlvs=[
+        (9, struct.pack(">III", massimo, minimo, minimo)),
+        (26, struct.pack(">II", 640, 480) + b"\x00" * 16)]) + synthetic_jpeg(100)
+
+
+def test_lens_limits_from_tlv_9():
+    assert parse_rtp(_con_tlv9(220, 35)).lens_limits() == (3.5, 22.0)
+
+
+def test_lens_limits_missing_or_zero_is_none():
+    assert parse_rtp(rtp_header(1, 0, marker=True) + b"x").lens_limits() is None
+    assert parse_rtp(_con_tlv9(0, 0)).lens_limits() is None
+
+
+def test_lens_limits_of_the_real_capture():
+    pacchetti, _ = packets_from_fixture("1024x0768")
+    assembler = FrameAssembler()
+    for p in pacchetti:
+        assembler.feed(p)
+    assert assembler.lens_limits == (3.6, 22.0)
+
+
+def test_assembler_follows_the_lens_limits():
+    assembler = FrameAssembler()
+    assembler.feed(_con_tlv9(220, 35))
+    assert assembler.lens_limits == (3.5, 22.0)
+    assembler.feed(_con_tlv9(220, 56))
+    assert assembler.lens_limits == (5.6, 22.0)

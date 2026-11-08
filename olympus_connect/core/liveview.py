@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 TLV_AF_FRAME = 2
 TLV_FRAME_SIZE = 26
+TLV_LENS = 9
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 
 
@@ -39,6 +40,17 @@ class RtpPacket:
             return None
         larghezza, altezza = struct.unpack(">II", valore[:8])
         return larghezza, altezza
+
+    def lens_limits(self) -> tuple[float, float] | None:
+        """(diaframma più aperto alla focale attuale, più chiuso), dal TLV 9
+        in decimi di f-stop. Misurato: [220, 35, 35] a 12 mm → (3.5, 22.0)."""
+        valore = (self.tlvs or {}).get(TLV_LENS)
+        if valore is None or len(valore) < 8:
+            return None
+        massimo, minimo = struct.unpack(">II", valore[:8])
+        if not massimo or not minimo:
+            return None
+        return minimo / 10, massimo / 10
 
 
 def _tlvs(dati: bytes) -> dict[int, bytes] | None:
@@ -106,7 +118,9 @@ class FrameAssembler:
         self._size = 0
         self._last_seq: int | None = None
         self._pending_size: tuple[int, int] | None = None
+        self._pending_lens: tuple[float, float] | None = None
         self.frame_size: tuple[int, int] | None = None
+        self.lens_limits: tuple[float, float] | None = None
 
     def feed(self, packet: bytes) -> bytes | None:
         try:
@@ -127,6 +141,7 @@ class FrameAssembler:
             self._parts = [p.payload]
             self._size = len(p.payload)
             self._pending_size = p.frame_size()
+            self._pending_lens = p.lens_limits()
         elif self._parts is None or not continuo:
             self._parts = None
             return None
@@ -145,4 +160,5 @@ class FrameAssembler:
         if jpeg[:2] != b"\xff\xd8" or jpeg[-2:] != b"\xff\xd9":
             return None
         self.frame_size = self._pending_size
+        self.lens_limits = self._pending_lens
         return jpeg
