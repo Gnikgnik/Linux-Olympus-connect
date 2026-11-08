@@ -1274,15 +1274,37 @@ def test_retry_is_ignored_during_the_exposure(long_win, qapp):
     assert win._remote_view.message().startswith("Posa in corso")
 
 
-def test_after_the_shot_a_still_stalled_live_offers_retry(long_win, qapp):
+def test_after_the_shot_a_still_stalled_live_restarts_after_the_review(long_win, qapp):
+    # sul campo: dopo una posa da 60" la fotocamera non riprende il live da sola
     win = long_win
+    win._remote_view._review_timer.setInterval(300)
     _posa(win, qapp)
     _FakeLive.istanze[-1].stalled.emit()
     qapp.processEvents()
+    prima = _RecordingClient.chiamate.count(("enter_rec_mode", "1024x0768"))
     _LongShotClient.rilascio.set()
-    assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
-    assert win._remote_view._retry.isVisible()
+    assert _attendi(qapp, win._remote_view.is_reviewing)
+    assert not win._remote_view._retry.isVisible()      # l'anteprima resta scoperta
     assert not win._exposure_timer.isActive()
+    assert _attendi(qapp, lambda: _RecordingClient.chiamate.count(
+        ("enter_rec_mode", "1024x0768")) == prima + 1, 3.0)
+
+
+def test_a_live_back_during_the_review_needs_no_restart(long_win, qapp):
+    win = long_win
+    win._remote_view._review_timer.setInterval(300)
+    _posa(win, qapp)
+    live = _FakeLive.istanze[-1]
+    live.stalled.emit()
+    qapp.processEvents()
+    prima = _RecordingClient.chiamate.count(("enter_rec_mode", "1024x0768"))
+    _LongShotClient.rilascio.set()
+    assert _attendi(qapp, win._remote_view.is_reviewing)
+    live.resumed.emit()
+    assert _attendi(qapp, lambda: not win._remote_view.is_reviewing(), 3.0)
+    _attendi(qapp, lambda: False, 0.2)
+    assert _RecordingClient.chiamate.count(("enter_rec_mode", "1024x0768")) == prima
+    assert win._remote_view.message() == ""
 
 
 def test_after_a_failed_shot_a_still_stalled_live_offers_retry(long_win, qapp):
@@ -1317,9 +1339,12 @@ def test_a_stall_after_the_shot_still_offers_retry(long_win, qapp):
     _posa(win, qapp)
     _LongShotClient.rilascio.set()
     assert _attendi(qapp, win._remote_view.is_reviewing)
+    win._remote_view._review_timer.setInterval(300)
+    win._remote_view._review_timer.start()
     _FakeLive.istanze[-1].stalled.emit()
     assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
-    assert win._remote_view._retry.isVisible()
+    assert not win._remote_view._retry.isVisible()      # non sopra l'anteprima
+    assert _attendi(qapp, win._remote_view._retry.isVisible, 3.0)
 
 
 def test_leaving_during_the_exposure_stops_the_countdown(long_win, qapp):

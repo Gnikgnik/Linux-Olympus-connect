@@ -457,3 +457,5 @@ Prova con l'app (`OLYMPUS_DEBUG=1`) e due script offline in `diag-downloads/` (i
 | 60" | 129,0 s | nessuna risposta HTTP, live fermo; Wi-Fi in piedi |
 
 Dopo la risposta `stoptake` e `getrecview` sono immediati e la fotocamera torna normale. Quindi la fotocamera resta occupata per circa due volte la posa (posa più scatto al buio) e qualche secondo.
+
+**Pose lunghe con l'app** (dopo la correzione dell'attesa): 8" e 60" in M dallo stesso pannello. Lo scatto da 8" risponde in circa 17 s con l'anteprima e il live che riparte da solo. Lo scatto da 60" risponde in circa 130 s (attesa massima dell'app 147 s), la foto è sulla scheda e l'anteprima arriva (210 KB), ma dopo il 60" la fotocamera **non riprende il live da sola**: «Live interrotto», e con Riprova si rientra senza problemi. L'anteprima non si vedeva perché il velo di «Live interrotto» le era disegnato sopra. Correzione: l'anteprima resta sopra messaggio e Riprova; dopo uno scatto riuscito col live fermo l'app lo fa ripartire da sola alla fine dell'anteprima.

@@ -57,6 +57,7 @@ def map_to_frame(pos: tuple[float, float], container: tuple[int, int],
 class RemoteView(QWidget):
     focus_requested = pyqtSignal(int, int)
     retry_requested = pyqtSignal()
+    review_ended = pyqtSignal()
 
     REVIEW_MS = 2000
 
@@ -69,6 +70,7 @@ class RemoteView(QWidget):
         self._review: QPixmap | None = None
         self._review_opacity = 1.0
         self._message = ""
+        self._retry_wanted = False
         self._area: tuple[int, int, int, int] | None = None
         self._focus_enabled = True
         self._af: tuple[int, int] | None = None
@@ -145,6 +147,7 @@ class RemoteView(QWidget):
         if not data or not pixmap.loadFromData(data):
             return False
         self._review = pixmap
+        self._retry.hide()                 # l'anteprima sta sopra a tutto, anche al Riprova
         self._fade.stop()
         self._fade.setStartValue(0.35)
         self._fade.setEndValue(1.0)
@@ -158,11 +161,16 @@ class RemoteView(QWidget):
 
     def _end_review(self) -> None:
         self._review = None
+        if self._message and self._retry_wanted:
+            self._retry.show()
         self.update()
+        self.review_ended.emit()
 
     def show_message(self, text: str, retry: bool = False) -> None:
         self._message = text
-        self._retry.setVisible(retry)
+        self._retry_wanted = retry
+        # durante l'anteprima messaggio e Riprova aspettano che finisca
+        self._retry.setVisible(retry and self._review is None)
         self._place_retry()
         self.update()
 
@@ -225,7 +233,7 @@ class RemoteView(QWidget):
             painter.drawPixmap(QRectF(x, y, w, h).toRect(), self._review)
             painter.setOpacity(1.0)
 
-        if self._message:
+        if self._message and self._review is None:
             painter.fillRect(self.rect(), QColor(0, 0, 0, 140))
             painter.setPen(QColor(theme.TEXT))
             font = painter.font()

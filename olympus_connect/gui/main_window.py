@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
         # fotocamera non manda pacchetti finché starttake non torna), quindi
         # l'avviso di live interrotto si rimanda alla fine dello scatto.
         self._shot_in_flight = False
+        self._live_restart_pending = False
         self._live_down: str | None = None     # avviso del live rimandato, se fermo
         self._exposure_shown = False
         self._exposure_left = 0
@@ -164,6 +165,7 @@ class MainWindow(QMainWindow):
 
         self._remote_view.focus_requested.connect(self.on_remote_focus_requested)
         self._remote_view.retry_requested.connect(self.on_live_retry)
+        self._remote_view.review_ended.connect(self._restart_live_after_shot)
         self._remote_panel.shoot_requested.connect(self.on_remote_shoot)
         self._remote_panel.movie_toggle_requested.connect(self.on_remote_movie_toggle)
         self._remote_panel.props.prop_changed.connect(self.on_remote_prop_changed)
@@ -1014,6 +1016,7 @@ class MainWindow(QMainWindow):
         self._remote_active = True
         self._remote_entered = False
         self._shot_in_flight = False
+        self._live_restart_pending = False
         self._live_down = None
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
@@ -1152,18 +1155,38 @@ class MainWindow(QMainWindow):
         self._exposure_timer.stop()
         self._exposure_shown = False
 
-    def _end_shot(self) -> None:
-        """Fine dello scatto, riuscito o no: via il conto alla rovescia, e se
-        il live è ancora fermo il solito avviso con Riprova."""
+    def _end_shot(self, riuscito: bool = False) -> None:
+        """Fine dello scatto, riuscito o no: via il conto alla rovescia. Se il
+        live è ancora fermo: dopo uno scatto riuscito riparte da solo alla fine
+        dell'anteprima (dopo una posa da 60" la fotocamera non lo riprende,
+        verificato sul campo il 2026-11-08); dopo un errore il solito Riprova."""
         mostrato = self._exposure_shown
         self._shot_in_flight = False
         self._stop_exposure()
         if self._remote_leaving or self._closing or not self._remote_active:
             return
-        if self._live_down is not None:
+        if self._live_down is not None and riuscito:
+            self._live_restart_pending = True
+            self._remote_view.show_message("Il live riparte…")
+        elif self._live_down is not None:
             self._remote_view.show_message(self._LIVE_DOWN[self._live_down], retry=True)
         elif mostrato:
             self._remote_view.show_message("")
+
+    def _restart_live_after_shot(self) -> None:
+        """Fine dell'anteprima dopo uno scatto col live fermo: lo fa ripartire
+        come Riprova. Se nel frattempo il live è tornato da solo, niente."""
+        if not self._live_restart_pending:
+            return
+        self._live_restart_pending = False
+        if (not self._remote_active or self._remote_leaving or self._closing
+                or self._shot_in_flight):
+            return
+        if self._live_down is None:
+            if self._remote_view.message() == "Il live riparte…":
+                self._remote_view.show_message("")
+            return
+        self.on_live_retry()
 
     def on_live_retry(self) -> None:
         if (not self._remote_active or self._live_worker is None
@@ -1207,9 +1230,10 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bytes)
     def on_remote_shot(self, review: bytes) -> None:
-        self._end_shot()
+        self._end_shot(riuscito=True)
         self._remote_panel.set_busy(False)
-        self._remote_view.show_review(review)
+        if not self._remote_view.show_review(review):
+            self._restart_live_after_shot()     # niente anteprima da aspettare
         self.statusBar().showMessage("Scatto eseguito.", 4000)
 
     def on_remote_movie_toggle(self) -> None:

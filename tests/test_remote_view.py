@@ -182,3 +182,17 @@ def test_panel_has_the_settings_section_and_disables_it(qapp):
     assert pannello.props._enabled is True
     pannello.set_recording(True)
     assert pannello.props._enabled is False
+
+
+def test_the_review_stays_on_top_of_a_message_and_its_retry(qapp):
+    vista = RemoteView()
+    vista.resize(400, 300)
+    vista.show()
+    finita = []
+    vista.review_ended.connect(lambda: finita.append(True))
+    assert vista.show_review(_jpeg())
+    vista.show_message("Live interrotto.", retry=True)
+    assert not vista._retry.isVisible()
+    vista._end_review()
+    assert vista._retry.isVisible() and finita == [True]
+    vista.hide()
