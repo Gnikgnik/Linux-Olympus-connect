@@ -1172,6 +1172,10 @@ class MainWindow(QMainWindow):
     def on_remote_props(self, props: object) -> None:
         if not self._remote_active:
             return
+        if not props:
+            # risposta 200 con un corpo illeggibile: come una lettura fallita
+            self.on_remote_props_failed("Elenco delle impostazioni illeggibile")
+            return
         self._remote_panel.props.set_props(props)
 
     @pyqtSlot(str)

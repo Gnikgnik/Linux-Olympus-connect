@@ -1147,6 +1147,15 @@ def test_failed_read_shows_unavailable(props_win, qapp, monkeypatch):
     assert _attendi(qapp, lambda: win._remote_panel.props.message() != "")
 
 
+def test_an_unreadable_list_shows_unavailable(props_win, qapp, monkeypatch):
+    monkeypatch.setattr(_PropsStubClient, "camera_props", lambda self: {})
+    win = props_win
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.message() == "Impostazioni non disponibili")
+    assert win._remote_panel.props.names() == []
+    assert win.statusBar().currentMessage() == "Elenco delle impostazioni illeggibile"
+
+
 def test_reentering_starts_without_the_old_settings(props_win, qapp):
     win = props_win
     win._view_remote.click()

@@ -138,6 +138,10 @@ class PropStepper(QWidget):
                 self._refresh()
 
     def wheelEvent(self, event) -> None:
+        if self._name == "takemode":
+            # scorrendo il pannello si cambierebbe modalità per sbaglio: solo frecce ed elenco
+            event.ignore()
+            return
         y = event.angleDelta().y()
         if y:
             self.step(1 if y > 0 else -1)

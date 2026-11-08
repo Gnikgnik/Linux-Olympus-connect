@@ -340,3 +340,22 @@ def test_a_reread_arriving_before_the_pause_ends_does_not_revive_old_values(qapp
     sezione.set_props(parse_desclist((REMOTE / "desclist_S.xml").read_bytes()))
     assert not _attendi(qapp, lambda: len(cambi) > 1, 0.4)
     assert sezione.row("shutspeedvalue").shown_value() == "640"
+
+
+def _rotella(y=120):
+    return QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, y),
+                       Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                       Qt.ScrollPhase.NoScrollPhase, False)
+
+
+def test_the_wheel_does_not_change_the_mode(qapp):
+    modo = CameraProp("takemode", "A", ("P", "A", "S", "M"), True)
+    s, eventi = _stepper(modo)
+    evento = _rotella()
+    s.wheelEvent(evento)
+    assert s.shown_value() == "A" and not s.is_pending()
+    assert not evento.isAccepted()                      # la rotella resta al pannello che scorre
+    s.step(1)                                           # le frecce sì
+    assert s.shown_value() == "S"
+    s.choose("M")                                       # e l'elenco
+    assert _attendi(qapp, lambda: eventi == [("takemode", "M")])
