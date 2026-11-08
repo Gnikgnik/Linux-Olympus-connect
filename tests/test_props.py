@@ -160,3 +160,17 @@ def test_lens_limits_none_allows_every_aperture_again(qapp):
     assert s.row("focalvalue").menu_values() == ["3.5", "4.0", "5.6"]
     s.set_lens_limits(None)
     assert s.row("focalvalue").menu_values() == list(APERTURA.values)
+
+
+def test_automatic_rows_say_so_and_keep_the_value_column(qapp):
+    s, _ = _stepper(APERTURA, automatic=True)
+    assert s._value.text() == "f/3,5 · automatico"
+    s.resize(300, 24)
+    s.show()
+    qapp.processEvents()
+    x_auto = s._value.geometry().x()
+    s.set_prop(APERTURA, False)
+    qapp.processEvents()
+    assert s._value.text() == "f/3,5"
+    assert s._value.geometry().x() == x_auto
+    s.hide()

@@ -48,12 +48,14 @@ class PropStepper(QWidget):
         self._value.setObjectName("propValue")
         self._value.clicked.connect(self._open_menu)
         self._next = self._arrow("chevron-right", +1)
-        self._auto = QLabel("automatico")
-        self._auto.setObjectName("faint")
+        for freccia in (self._prev, self._next):
+            # nascoste sulle righe automatiche, ma il posto resta: i valori stanno in colonna
+            criterio = freccia.sizePolicy()
+            criterio.setRetainSizeWhenHidden(True)
+            freccia.setSizePolicy(criterio)
         riga.addWidget(self._prev)
         riga.addWidget(self._value, 1)
         riga.addWidget(self._next)
-        riga.addWidget(self._auto)
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -148,14 +150,16 @@ class PropStepper(QWidget):
         return self._automatic
 
     def _refresh(self) -> None:
-        self._value.setText(format_value(self._name, self._shown) if self._shown else "—")
+        testo = format_value(self._name, self._shown) if self._shown else "—"
+        if self._automatic:
+            testo = f"{testo} · automatico"
+        self._value.setText(testo)
         self._value.setProperty("pending", self.is_pending())
         self._value.style().unpolish(self._value)
         self._value.style().polish(self._value)
         self._value.setEnabled(not self._automatic)
         for freccia in (self._prev, self._next):
             freccia.setVisible(not self._automatic)
-        self._auto.setVisible(self._automatic)
 
 
 class PropsSection(QWidget):
