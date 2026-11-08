@@ -439,3 +439,21 @@ stopliveview 200
 ritorno in riproduzione 200
 live ricevuto in tutto: 18460 pacchetti
 ```
+
+## Impostazioni dal PC con l'app (2026-11-08)
+
+Prova con l'app (`OLYMPUS_DEBUG=1`) e due script offline in `diag-downloads/` (ignorati da git).
+
+**Virgolette dei tempi lunghi** (`prova_virgolette.py`, in M): `<value>2"</value>` e `<value>60"</value>` vengono presi e riletti uguali; con `&quot;` la fotocamera capisce `1"` in entrambi i casi. L'app manda le virgolette così come sono. Ripristino di tempo e modalità riuscito.
+
+**Pannello** (riferito dall'utente): righe presenti all'ingresso; il diaframma resta fermo finché arriva il live, poi l'elenco segue l'obiettivo e lo zoom; le righe «automatico» cambiano con la modalità (P, A, S, M, iAuto, ART, Scene); i valori sul monitor della fotocamera coincidono con il pannello; i nomi di bilanciamento, scatto, filtri e varianti sembrano coincidere. Nel registro tutti i comandi `set_camprop` (modalità, tempo da 1/500 a 60", ISO, diaframma da f/4,5 a f/22) rispondono 200 e la rilettura conferma.
+
+**Pose lunghe**: uno scatto a 60" dall'app ha rotto la sessione. La foto c'è sulla scheda, ma l'app aspettava la risposta allo scatto al massimo 15 s, poi il live fermo ha proposto «Riprova» e la richiesta di rientro, in coda dietro lo scatto, ha trovato la fotocamera ancora occupata. Misura con `prova_posa_lunga.py` (M, riduzione rumore `auto` da `1"`):
+
+| Tempo | Risposta a `starttake` | Durante l'attesa |
+|---|---|---|
+| 2" (dall'app) | circa 2 s | — |
+| 8" | 16,8 s | nessuna risposta HTTP, live fermo |
+| 60" | 129,0 s | nessuna risposta HTTP, live fermo; Wi-Fi in piedi |
+
+Dopo la risposta `stoptake` e `getrecview` sono immediati e la fotocamera torna normale. Quindi la fotocamera resta occupata per circa due volte la posa (posa più scatto al buio) e qualche secondo.
