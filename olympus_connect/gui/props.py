@@ -212,8 +212,7 @@ class PropsSection(QWidget):
             riga.set_prop(props[nome], is_automatic(nome, props))
             riga.setEnabled(self._enabled)
         self._order = nomi
-        if "focalvalue" in self._rows:
-            self._rows["focalvalue"].set_allowed(aperture_allowed(self._limits))
+        self._apply_lens_limits()
 
     def set_unavailable(self, message: str) -> None:
         self._drop_rows()
@@ -236,8 +235,19 @@ class PropsSection(QWidget):
 
     def set_lens_limits(self, limits: tuple[float, float] | None) -> None:
         self._limits = limits
-        if "focalvalue" in self._rows:
-            self._rows["focalvalue"].set_allowed(aperture_allowed(limits))
+        self._apply_lens_limits()
+
+    def _apply_lens_limits(self) -> None:
+        """La scala del diaframma (1.0 … 91) non dipende dall'obiettivo e la
+        fotocamera accetta anche i valori fuori obiettivo: finché il live non
+        ha dichiarato i limiti, la riga resta sul solo valore confermato."""
+        riga = self._rows.get("focalvalue")
+        if riga is None:
+            return
+        if self._limits is None:
+            riga.set_allowed(lambda v, r=riga: v == r.confirmed_value())
+        else:
+            riga.set_allowed(aperture_allowed(self._limits))
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled

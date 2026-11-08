@@ -151,15 +151,27 @@ def test_section_unavailable_and_disabled(qapp):
     assert not sezione.row("isospeedvalue").isEnabled()
 
 
-def test_lens_limits_none_allows_every_aperture_again(qapp):
+def test_without_lens_limits_the_aperture_stays_where_it_is(qapp):
     s = PropsSection()
+    cambi = []
+    s.prop_changed.connect(lambda n, v: cambi.append((n, v)))
     props = {"takemode": CameraProp("takemode", "A", ("P", "A", "S", "M"), True),
              "focalvalue": APERTURA}
     s.set_props(props)
+    riga = s.row("focalvalue")
+    assert riga.menu_values() == ["3.5"]                 # obiettivo ignoto: solo il valore attuale
+    assert not riga.is_automatic() and riga._value.text() == "f/3,5"
+    riga.step(1)
+    riga.step(-1)
+    riga.choose("1.0")
+    assert riga.shown_value() == "3.5" and not riga.is_pending()
     s.set_lens_limits((3.5, 5.6))
-    assert s.row("focalvalue").menu_values() == ["3.5", "4.0", "5.6"]
-    s.set_lens_limits(None)
-    assert s.row("focalvalue").menu_values() == list(APERTURA.values)
+    assert riga.menu_values() == ["3.5", "4.0", "5.6"]
+    s.set_lens_limits(None)                              # di nuovo ignoto
+    assert riga.menu_values() == ["3.5"]
+    s.set_props({**props, "focalvalue": CameraProp("focalvalue", "5.6", APERTURA.values, True)})
+    assert riga.menu_values() == ["5.6"]                 # segue il valore confermato
+    assert not _attendi(qapp, lambda: cambi, 0.4)
 
 
 def test_automatic_rows_say_so_and_keep_the_value_column(qapp):
@@ -184,7 +196,7 @@ def test_clear_forgets_rows_and_lens_limits(qapp):
     sezione.clear()
     assert sezione.names() == [] and sezione.message() == ""
     sezione.set_props(parse_desclist((REMOTE / "desclist_A.xml").read_bytes()))
-    assert "1.0" in sezione.row("focalvalue").menu_values()
+    assert sezione.row("focalvalue").menu_values() == ["3.5"]    # limiti dimenticati
 
 
 TEMPO = CameraProp("shutspeedvalue", "livecomp",

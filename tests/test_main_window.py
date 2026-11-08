@@ -1160,7 +1160,8 @@ def test_reentering_starts_without_the_old_settings(props_win, qapp):
     assert win._remote_active
     assert win._remote_panel.props.names() == []      # niente righe della sessione prima
     assert _attendi(qapp, lambda: win._remote_panel.props.row("focalvalue") is not None)
-    assert "1.0" in win._remote_panel.props.row("focalvalue").menu_values()
+    # nessun fotogramma del live ancora: l'obiettivo è ignoto, resta il solo valore attuale
+    assert win._remote_panel.props.row("focalvalue").menu_values() == ["3.5"]
 
 
 def test_no_read_is_sent_when_entered_arrives_while_leaving(props_win, qapp):
