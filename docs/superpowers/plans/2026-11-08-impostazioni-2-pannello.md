@@ -1495,13 +1495,24 @@ Non è codice. Il controllore guida l'utente; ricordare che **mentre il PC è co
 
 - [ ] **Step 1: L'utente prova**
 
+Prima lo script delle virgolette (forma del tempo `60"` nel comando; rimette tutto com'era):
+
 ```bash
 nmcli connection up olympus-connect-E-M10MKIV-P-<seriale>
+.venv/bin/python diag-downloads/prova_virgolette.py
 OLYMPUS_DEBUG=1 .venv/bin/python -m olympus_connect 2>&1 | tee diag-downloads/prova_app_impostazioni.txt
 nmcli connection down olympus-connect-E-M10MKIV-P-<seriale>
 ```
 
-Sequenza: Telecomando; cambia **Modalità** (P, A, S, M: le righe automatiche cambiano?); in A cambia il **Diaframma** con la rotella e zooma (l'elenco segue lo zoom? sul monitor della fotocamera il valore è lo stesso?); cambia **ISO**, **Compensazione**, **Tempo** in S; in **M** porta il **Tempo** a un valore lungo come `2"` o `60"` (contiene le virgolette, che l'app codifica come `&quot;`: la fotocamera deve mostrare il tempo giusto e il pannello deve confermarlo, altrimenti va inviato il carattere senza codifica); **Bilanciamento** (i nomi coincidono con quelli della fotocamera?); **Scatto** (singolo/raffica); **ART** (Filtro e Variante compaiono? i nomi coincidono?); uno scatto con impostazioni cambiate; esci e controlla se la fotocamera torna a seguire la ghiera fisica.
+Sequenza nell'app, dopo la revisione finale:
+1. Telecomando: le righe compaiono; il **Diaframma** resta sul valore attuale finché arriva il live, poi l'elenco segue l'obiettivo.
+2. **Modalità** P, A, S, M, iAuto, ART, Scene: le righe automatiche cambiano come previsto? In iAuto/Scene bilanciamento e scatto restano modificabili: la fotocamera li rispetta? La rotella sopra la riga Modalità non fa nulla.
+3. In A: **Diaframma** con la rotella e zoom da un capo all'altro (l'elenco segue? a 12 mm compare f/3,5? fra 14 e 20 mm compare f/4,5 come sul monitor?).
+4. **ISO**, **Compensazione**, **Tempo** in S; nel monitor della fotocamera gli stessi valori.
+5. In **M**: **Tempo** `2"` e poi uno **scatto**; poi `60"` e uno **scatto** (l'app aspetta la fine della posa? i pulsanti tornano attivi solo dopo? la foto si vede?).
+6. **Bilanciamento** e **Scatto**: i nomi coincidono con la fotocamera? autoscatto e Live Composite/Time/Bulb non compaiono. Uno scatto in raffica H.
+7. **ART**: Filtro e Variante compaiono, i nomi coincidono.
+8. Esci dal telecomando: la fotocamera torna a seguire la ghiera fisica?
 
 - [ ] **Step 2: Annota l'esito**
 
