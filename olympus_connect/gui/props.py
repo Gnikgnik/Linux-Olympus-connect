@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
 
 from ..core.camprops import (
@@ -80,13 +80,33 @@ class PropStepper(QWidget):
         self._confirmed = prop.value
         if automatic:
             self._timer.stop()             # la fotocamera ha preso il controllo
+        self._drop_invalid_pending()
         if not self._timer.isActive():
             self._shown = prop.value
         self._refresh()
 
     def set_allowed(self, allowed: Callable[[str], bool] | None) -> None:
         self._allowed = allowed
+        if self._drop_invalid_pending():
+            self._shown = self._confirmed
         self._refresh()
+
+    def _drop_invalid_pending(self) -> bool:
+        """Un valore in attesa che il nuovo elenco (o i nuovi limiti) non
+        ammette più non deve partire: per esempio un tempo scelto in M che
+        in S non esiste."""
+        if self._timer.isActive() and not self._selectable(self._shown):
+            self._timer.stop()
+            return True
+        return False
+
+    def discard(self) -> None:
+        """La riga esce dal pannello: niente più comandi, nemmeno in attesa."""
+        self._timer.stop()
+        try:
+            self.changed.disconnect()
+        except TypeError:
+            pass
 
     # -- interazione --------------------------------------------------------------
 
@@ -106,6 +126,16 @@ class PropStepper(QWidget):
         self._shown = value
         self._refresh()
         self._timer.start()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange and not self.isEnabled():
+            # spenta (registrazione, cambio di modalità): il comando in attesa
+            # cade subito, e non riparte se la riga si riaccende prima della pausa
+            if self._timer.isActive():
+                self._timer.stop()
+                self._shown = self._confirmed
+                self._refresh()
 
     def wheelEvent(self, event) -> None:
         y = event.angleDelta().y()
@@ -192,26 +222,26 @@ class PropsSection(QWidget):
         self._order: list[str] = []
         self._limits: tuple[float, float] | None = None
         self._enabled = True
+        self._mode_in_flight = False
 
     def set_props(self, props: dict[str, CameraProp]) -> None:
         self._message.hide()
+        self._mode_in_flight = False       # la rilettura dopo il cambio di modalità è arrivata
         nomi = visible_props(props)
         for nome in [n for n in self._rows if n not in nomi]:
-            riga = self._rows.pop(nome)
-            self._rows_box.removeWidget(riga)
-            riga.deleteLater()
+            self._remove_row(self._rows.pop(nome))
         for nome in nomi:
             if nome not in self._rows:
                 riga = PropStepper(nome)
-                riga.changed.connect(self.prop_changed)
+                riga.changed.connect(self._forward)
                 self._rows[nome] = riga
             self._rows_box.removeWidget(self._rows[nome])
         for nome in nomi:
             riga = self._rows[nome]
             self._rows_box.addWidget(riga)
             riga.set_prop(props[nome], is_automatic(nome, props))
-            riga.setEnabled(self._enabled)
         self._order = nomi
+        self._apply_enabled()
         self._apply_lens_limits()
 
     def set_unavailable(self, message: str) -> None:
@@ -228,10 +258,24 @@ class PropsSection(QWidget):
 
     def _drop_rows(self) -> None:
         for riga in self._rows.values():
-            self._rows_box.removeWidget(riga)
-            riga.deleteLater()
+            self._remove_row(riga)
         self._rows.clear()
         self._order = []
+        self._mode_in_flight = False
+
+    def _remove_row(self, riga: PropStepper) -> None:
+        riga.discard()
+        self._rows_box.removeWidget(riga)
+        riga.deleteLater()
+
+    def _forward(self, name: str, value: str) -> None:
+        """Dopo un cambio di modalità le altre righe mostrano i valori della
+        modalità vecchia (la fotocamera li tiene per modalità): restano
+        spente, e i loro comandi in attesa cadono, fino alla rilettura."""
+        if name == "takemode":
+            self._mode_in_flight = True
+            self._apply_enabled()
+        self.prop_changed.emit(name, value)
 
     def set_lens_limits(self, limits: tuple[float, float] | None) -> None:
         self._limits = limits
@@ -251,8 +295,11 @@ class PropsSection(QWidget):
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled
-        for riga in self._rows.values():
-            riga.setEnabled(enabled)
+        self._apply_enabled()
+
+    def _apply_enabled(self) -> None:
+        for nome, riga in self._rows.items():
+            riga.setEnabled(self._enabled and (not self._mode_in_flight or nome == "takemode"))
 
     def row(self, name: str) -> PropStepper | None:
         return self._rows.get(name)

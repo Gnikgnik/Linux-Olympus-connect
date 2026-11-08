@@ -223,3 +223,120 @@ def test_stepping_skips_the_self_timer(qapp):
     assert s.shown_value() == "continuous-H"
     s.choose("customselftimer")                 # non è nell'elenco: ignorato
     assert s.shown_value() == "continuous-H"
+
+
+def test_a_pending_value_missing_from_the_new_list_is_dropped(qapp):
+    s, eventi = _stepper()
+    s.step(1)                                           # 250 in attesa
+    s.set_prop(CameraProp("isospeedvalue", "200", ("Auto", "200", "320"), True), False)
+    assert s.shown_value() == "200" and not s.is_pending()
+    assert not _attendi(qapp, lambda: eventi, 0.4)
+
+
+def test_a_pending_value_no_longer_allowed_is_dropped(qapp):
+    s, eventi = _stepper(APERTURA)
+    from olympus_connect.core.camprops import aperture_allowed
+    s.set_allowed(aperture_allowed((3.5, 8.0)))
+    s.step(1)                                           # 4.0 in attesa
+    s.set_prop(APERTURA, False)                         # rilettura: 4.0 è ancora ammesso
+    assert s.shown_value() == "4.0" and s.is_pending()
+    s.set_allowed(aperture_allowed((5.6, 8.0)))         # si è zoomato: 4.0 non c'è più
+    assert s.shown_value() == "3.5" and not s.is_pending()
+    s.set_allowed(aperture_allowed((3.5, 8.0)))
+    s.step(1)
+    s.set_allowed(lambda v: v == "3.5")                 # come con l'obiettivo ignoto
+    s.set_prop(APERTURA, False)
+    assert s.shown_value() == "3.5" and not s.is_pending()
+    assert not _attendi(qapp, lambda: eventi, 0.4)
+
+
+def _art_e_p():
+    props = parse_desclist((REMOTE / "camprop_desclist.xml").read_bytes())
+    art = dict(props)
+    art["takemode"] = CameraProp("takemode", "ART", props["takemode"].values, True)
+    p = dict(props)
+    p["takemode"] = CameraProp("takemode", "P", props["takemode"].values, True)
+    return art, p
+
+
+def test_a_removed_row_never_sends(qapp):
+    art, p = _art_e_p()
+    sezione = PropsSection()
+    cambi = []
+    sezione.prop_changed.connect(lambda n, v: cambi.append((n, v)))
+    sezione.set_props(art)
+    filtro = sezione.row("artfilter")
+    filtro.step(1)
+    sezione.set_props(p)                                # la riga del filtro sparisce
+    assert sezione.row("artfilter") is None
+    assert not _attendi(qapp, lambda: cambi, 0.4)
+    filtro._send()                                      # anche forzandola: non arriva nulla
+    assert cambi == []
+
+
+def test_removed_rows_never_send_after_unavailable_or_clear(qapp):
+    for svuota in (lambda s: s.set_unavailable("Impostazioni non disponibili"),
+                   lambda s: s.clear()):
+        sezione = PropsSection()
+        cambi = []
+        sezione.prop_changed.connect(lambda n, v: cambi.append((n, v)))
+        sezione.set_props(parse_desclist((REMOTE / "desclist_M.xml").read_bytes()))
+        riga = sezione.row("isospeedvalue")
+        riga.step(1)
+        svuota(sezione)
+        assert not _attendi(qapp, lambda: cambi, 0.4)
+        riga._send()
+        assert cambi == []
+
+
+def test_while_the_mode_changes_the_other_rows_do_not_send(qapp):
+    """M → S, e il tempo girato prima che arrivi la rilettura di S: in S il
+    tempo ha un altro valore, il comando del tempo non deve partire."""
+    sezione = PropsSection()
+    cambi = []
+    sezione.prop_changed.connect(lambda n, v: cambi.append((n, v)))
+    sezione.set_props(parse_desclist((REMOTE / "desclist_M.xml").read_bytes()))
+    sezione.row("takemode").step(-1)                    # M → S
+    assert sezione.row("takemode").shown_value() == "S"
+    sezione.row("shutspeedvalue").step(-1)              # entro i 250 ms
+    assert _attendi(qapp, lambda: cambi == [("takemode", "S")])
+    assert not sezione.row("shutspeedvalue").isEnabled()
+    assert not sezione.row("isospeedvalue").isEnabled()
+    assert sezione.row("takemode").isEnabled()
+    assert not _attendi(qapp, lambda: len(cambi) > 1, 0.4)
+    sezione.row("isospeedvalue").step(1)                # spenta: niente
+    sezione.set_props(parse_desclist((REMOTE / "desclist_S.xml").read_bytes()))
+    tempo = sezione.row("shutspeedvalue")
+    assert tempo.isEnabled() and sezione.row("isospeedvalue").isEnabled()
+    assert tempo.shown_value() == "640" and not tempo.is_pending()
+    assert not _attendi(qapp, lambda: len(cambi) > 1, 0.4)
+    assert cambi == [("takemode", "S")]
+
+
+def test_the_mode_change_respects_set_enabled(qapp):
+    sezione = PropsSection()
+    sezione.set_props(parse_desclist((REMOTE / "desclist_M.xml").read_bytes()))
+    sezione.row("takemode").step(-1)
+    assert _attendi(qapp, lambda: not sezione.row("isospeedvalue").isEnabled())
+    sezione.set_enabled(True)                           # fine registrazione: la modalità è ancora in volo
+    assert not sezione.row("isospeedvalue").isEnabled()
+    sezione.set_enabled(False)
+    sezione.set_props(parse_desclist((REMOTE / "desclist_S.xml").read_bytes()))
+    assert not sezione.row("isospeedvalue").isEnabled()   # in registrazione resta spenta
+    sezione.set_enabled(True)
+    assert sezione.row("isospeedvalue").isEnabled()
+
+
+def test_a_reread_arriving_before_the_pause_ends_does_not_revive_old_values(qapp):
+    sezione = PropsSection()
+    cambi = []
+    sezione.prop_changed.connect(lambda n, v: cambi.append((n, v)))
+    sezione.set_props(parse_desclist((REMOTE / "desclist_M.xml").read_bytes()))
+    sezione.row("takemode").step(-1)                    # M → S
+    assert not _attendi(qapp, lambda: False, 0.15)
+    sezione.row("shutspeedvalue").step(-1)              # 500: esiste anche in S
+    assert _attendi(qapp, lambda: cambi == [("takemode", "S")])
+    assert sezione.row("shutspeedvalue").shown_value() == "640"   # caduto subito
+    sezione.set_props(parse_desclist((REMOTE / "desclist_S.xml").read_bytes()))
+    assert not _attendi(qapp, lambda: len(cambi) > 1, 0.4)
+    assert sezione.row("shutspeedvalue").shown_value() == "640"
