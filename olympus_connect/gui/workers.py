@@ -487,48 +487,70 @@ class TimelapseWorker(QObject):
             processo.kill()
             processo.wait()
 
+    @staticmethod
+    def _discard(parziale: Path) -> None:
+        """Cancella il file parziale; se non ci riesce (cartella sparita, sola
+        lettura) pazienza: un'eccezione qui farebbe solo danni."""
+        try:
+            parziale.unlink(missing_ok=True)
+        except OSError:
+            pass
+
     @pyqtSlot()
     def run(self) -> None:
-        ffmpeg = self._ffmpeg or find_ffmpeg()
-        if ffmpeg is None:
-            self.failed.emit("ffmpeg non è installato: il video non si può montare.")
-            return
+        """Si usa una volta sola. Nessuna eccezione esce da qui: in PyQt
+        un'eccezione che esce da uno slot chiude il programma."""
         parziale = self._out.with_name(self._out.name + ".part")
         try:
-            with tempfile.TemporaryDirectory(prefix="olympus-timelapse-") as temporanea:
-                cartella = Path(temporanea)
-                totale = link_frames(self._files, cartella)
-                with open(cartella / "errori.txt", "w+b") as errori:
-                    self._process = subprocess.Popen(
-                        build_command(ffmpeg, cartella, self._fps, self._size, parziale),
-                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errori,
-                        text=True)
-                    if self._cancel.is_set():
-                        self._process.terminate()
-                    for riga in self._process.stdout:
-                        scritti = parse_progress(riga)
-                        if scritti is not None:
-                            self.progress.emit(min(scritti, totale), totale)
-                    codice = self._process.wait()
-                    errori.seek(0)
-                    messaggio = errori.read().decode("utf-8", "replace").strip()
+            self._run(parziale)
         except Exception as exc:
             self._kill_process()
-            parziale.unlink(missing_ok=True)
+            self._discard(parziale)
             self.failed.emit(f"Il montaggio del video non è riuscito: {exc}")
-            return
         finally:
             processo = self._process
             if processo is not None and processo.stdout is not None:
                 processo.stdout.close()
+
+    def _run(self, parziale: Path) -> None:
+        ffmpeg = self._ffmpeg or find_ffmpeg()
+        if ffmpeg is None:
+            self.failed.emit("ffmpeg non è installato: il video non si può montare.")
+            return
+        mancanti = [f for f in self._files if not f.exists()]
+        if mancanti:
+            # ffmpeg si fermerebbe alla prima foto mancante senza dirlo: video tronco
+            self.failed.emit(f"Il montaggio del video non è riuscito: mancano {len(mancanti)} "
+                             f"foto della sequenza (la prima: {mancanti[0].name}).")
+            return
+        with tempfile.TemporaryDirectory(prefix="olympus-timelapse-") as temporanea:
+            cartella = Path(temporanea)
+            totale = link_frames(self._files, cartella)
+            if self._cancel.is_set():
+                self.cancelled.emit()
+                return
+            with open(cartella / "errori.txt", "w+b") as errori:
+                self._process = subprocess.Popen(
+                    build_command(ffmpeg, cartella, self._fps, self._size, parziale),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errori,
+                    text=True)
+                if self._cancel.is_set():       # annullato proprio mentre partiva
+                    self._process.terminate()
+                for riga in self._process.stdout:
+                    scritti = parse_progress(riga)
+                    if scritti is not None:
+                        self.progress.emit(min(scritti, totale), totale)
+                codice = self._process.wait()
+                errori.seek(0)
+                messaggio = errori.read().decode("utf-8", "replace").strip()
         if self._cancel.is_set():
-            parziale.unlink(missing_ok=True)
+            self._discard(parziale)
             self.cancelled.emit()
             return
         if codice != 0:
-            parziale.unlink(missing_ok=True)
+            self._discard(parziale)
             ultima = messaggio.splitlines()[-1] if messaggio else f"codice {codice}"
             self.failed.emit(f"Il montaggio del video non è riuscito: {ultima}")
             return
-        os.replace(parziale, self._out)
+        os.replace(parziale, self._out)         # se fallisce ci pensa run()
         self.done.emit(str(self._out))

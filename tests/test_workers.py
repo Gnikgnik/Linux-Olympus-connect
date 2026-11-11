@@ -1056,3 +1056,35 @@ def test_timelapse_error_while_reading_the_progress_stops_ffmpeg(qapp, tmp_path,
     assert ev["done"] == [] and not (cartella / "timelapse.mp4.part").exists()
     with pytest.raises(OSError):
         os.kill(pid, 0)                              # il finto ffmpeg non è rimasto vivo
+
+
+def test_timelapse_that_cannot_put_the_video_in_place_fails_without_raising(qapp, tmp_path):
+    cartella, foto = _foto(tmp_path)
+    uscita = cartella / "timelapse.mp4"
+    uscita.mkdir()                                   # al posto del video c'è una cartella
+    ffmpeg = _finto_ffmpeg(tmp_path, 'echo frame=3\necho video > "$out"\n')
+    worker, ev = _timelapse(foto, uscita, ffmpeg)
+    worker.run()                                     # non deve sollevare
+    assert ev["done"] == [] and len(ev["failed"]) == 1
+    assert "Il montaggio del video non è riuscito" in ev["failed"][0]
+    assert not (cartella / "timelapse.mp4.part").exists()
+
+
+def test_timelapse_refuses_to_build_a_truncated_video(qapp, tmp_path):
+    cartella, foto = _foto(tmp_path)
+    foto[1].unlink()                                 # una foto è sparita dopo lo scarico
+    ffmpeg = _finto_ffmpeg(tmp_path, f'touch "{tmp_path}/partito"\necho video > "$out"\n')
+    worker, ev = _timelapse(foto, cartella / "timelapse.mp4", ffmpeg)
+    worker.run()
+    assert len(ev["failed"]) == 1 and "mancano 1 foto della sequenza (la prima: P1.JPG)" in ev["failed"][0]
+    assert not (tmp_path / "partito").exists()       # ffmpeg non è nemmeno partito
+
+
+def test_timelapse_cancelled_before_it_starts_never_runs_ffmpeg(qapp, tmp_path):
+    cartella, foto = _foto(tmp_path)
+    ffmpeg = _finto_ffmpeg(tmp_path, f'touch "{tmp_path}/partito"\necho video > "$out"\n')
+    worker, ev = _timelapse(foto, cartella / "timelapse.mp4", ffmpeg)
+    worker.cancel()
+    worker.run()
+    assert ev["cancelled"] == 1 and ev["done"] == [] and ev["failed"] == []
+    assert not (tmp_path / "partito").exists()
