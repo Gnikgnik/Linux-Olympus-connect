@@ -283,7 +283,7 @@ class SequenceEndDialog(QDialog):
                                         else DEFAULT_RESOLUTION)
         self._fps = QComboBox(self)
         for valore in FRAME_RATES:
-            self._fps.addItem(f"{valore} fotogrammi al secondo", valore)
+            self._fps.addItem(str(valore), valore)
         scelto = self._fps.findData(fps)
         self._fps.setCurrentIndex(scelto if scelto >= 0 else self._fps.findData(DEFAULT_FRAME_RATE))
 
@@ -304,7 +304,7 @@ class SequenceEndDialog(QDialog):
             griglia.addWidget(self._video_note, 1, 0, 1, 2)
             griglia.addWidget(QLabel("Risoluzione"), 2, 0)
             griglia.addWidget(self._resolution, 2, 1)
-            griglia.addWidget(QLabel("Velocità"), 3, 0)
+            griglia.addWidget(QLabel("Fotogrammi al secondo"), 3, 0)
             griglia.addWidget(self._fps, 3, 1)
             colonna.addLayout(griglia)
             self._later = QPushButton("Non ora")
@@ -380,6 +380,8 @@ class SequenceController(QObject):
     def start(self, plan: SequencePlan, busy: float | None = None) -> bool:
         """Avvia la sequenza. Falso se non è riuscito a impedire la
         sospensione del PC: la sequenza parte lo stesso."""
+        if self._state is not None:
+            self._close()                   # una sequenza ancora in corso si chiude, senza segnale
         self._state = SequenceState(plan, busy)
         self._started_at = self._wall()
         # All'avvio il live è acceso: il primo scatto non va svegliato.

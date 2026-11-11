@@ -880,6 +880,7 @@ def test_the_last_read_wins(qapp):
 
 # --- sequenze: istantanea dei nomi, pausa del live, montaggio -------------------------
 
+import os  # noqa: E402
 import threading  # noqa: E402
 
 from olympus_connect.core.timelapse import find_ffmpeg  # noqa: E402
@@ -1037,3 +1038,21 @@ def test_timelapse_with_the_real_ffmpeg(qapp, tmp_path):
     worker.run()
     assert ev["failed"] == [] and ev["done"] == [str(uscita)]
     assert ev["progress"][-1] == (3, 3) and uscita.stat().st_size > 1000
+
+
+def test_timelapse_error_while_reading_the_progress_stops_ffmpeg(qapp, tmp_path, monkeypatch):
+    cartella, foto = _foto(tmp_path)
+    uscita = cartella / "timelapse.mp4"
+    ffmpeg = _finto_ffmpeg(tmp_path, f'echo $$ > "{tmp_path}/pid"\necho meta > "$out"\n'
+                                     'echo frame=1\nexec sleep 30\n')
+    worker, ev = _timelapse(foto, uscita, ffmpeg)
+
+    def guasto(riga):
+        raise RuntimeError("lettura dell'avanzamento rotta")
+    monkeypatch.setattr("olympus_connect.gui.workers.parse_progress", guasto)
+    worker.run()
+    pid = int((tmp_path / "pid").read_text())
+    assert len(ev["failed"]) == 1 and "lettura dell'avanzamento rotta" in ev["failed"][0]
+    assert ev["done"] == [] and not (cartella / "timelapse.mp4.part").exists()
+    with pytest.raises(OSError):
+        os.kill(pid, 0)                              # il finto ffmpeg non è rimasto vivo

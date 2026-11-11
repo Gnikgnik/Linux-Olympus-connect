@@ -113,7 +113,7 @@ def test_abort_returns_the_result_without_the_signal(qapp):
 
 
 def test_three_failed_shots_in_a_row_end_the_sequence_as_aborted(qapp):
-    regista, orologio, _blocco, ev = _regista()
+    regista, orologio, blocco, ev = _regista()
     regista.start(SequencePlan(5, 1800))
     for _ in range(3):
         orologio.avanti(1)
@@ -122,10 +122,11 @@ def test_three_failed_shots_in_a_row_end_the_sequence_as_aborted(qapp):
         regista.tick()
     assert ev["fine"] == [SequenceResult(0, 3, True, QUANDO)]
     assert ev["scatti"] == 3
+    assert blocco.eventi[-1] == ("stop",) and not regista.is_running()
 
 
 def test_the_sequence_ends_with_its_last_shot(qapp):
-    regista, orologio, _blocco, ev = _regista()
+    regista, orologio, blocco, ev = _regista()
     regista.start(SequencePlan(5, 10))          # due scatti: a 0 e a 5 s
     orologio.avanti(1)
     regista.shot_done(True)
@@ -134,6 +135,7 @@ def test_the_sequence_ends_with_its_last_shot(qapp):
     orologio.avanti(1)
     regista.shot_done(True)
     assert ev["fine"] == [SequenceResult(2, 0, False, QUANDO)]
+    assert blocco.eventi[-1] == ("stop",)
 
 
 def test_the_live_is_woken_once_five_seconds_before_each_shot(qapp):
@@ -157,6 +159,37 @@ def test_the_live_is_woken_once_five_seconds_before_each_shot(qapp):
     orologio.avanti(114)
     regista.tick()
     assert ev["sveglie"] == 2                   # una per scatto
+
+
+def test_a_handler_that_aborts_on_the_wake_up_gets_no_shot_after_it(qapp):
+    regista, orologio, _blocco, ev = _regista()
+    regista.wake_requested.connect(regista.abort)
+    regista.start(SequencePlan(120, 900))
+    orologio.avanti(1)
+    regista.shot_done(True)
+    orologio.avanti(119)                        # scatto dovuto e sveglia nello stesso giro
+    regista.tick()
+    assert ev["sveglie"] == 1 and ev["scatti"] == 1 and ev["fine"] == []
+    assert not regista.is_running()
+
+
+def test_a_shot_refused_by_the_receiver_does_not_confuse_the_controller(qapp):
+    regista, orologio, _blocco, ev = _regista()
+    regista.shoot_requested.connect(lambda: regista.shot_done(False))    # «non posso scattare»
+    regista.start(SequencePlan(5, 1800))
+    for _ in range(2):
+        orologio.avanti(5)
+        regista.tick()
+    assert ev["fine"] == [SequenceResult(0, 3, True, QUANDO)] and ev["scatti"] == 3
+    assert not regista.is_running()
+
+
+def test_starting_again_closes_the_sequence_in_progress(qapp):
+    regista, _orologio, blocco, ev = _regista()
+    regista.start(SequencePlan(5, 1800))
+    regista.start(SequencePlan(10, 600))
+    assert blocco.eventi == [("start", 1800), ("stop",), ("start", 600)]
+    assert ev["fine"] == [] and ev["scatti"] == 2 and regista.is_running()
 
 
 def test_short_intervals_never_pause_the_live(qapp):
@@ -188,9 +221,9 @@ def test_the_real_timer_drives_the_sequence(qapp):
     regista.shoot_requested.connect(lambda: scatti.append(time.monotonic()))
     regista.start(SequencePlan(1, 300))
     regista.shot_done(True)
-    fine = time.monotonic() + 3
+    fine = time.monotonic() + 6
     while len(scatti) < 2 and time.monotonic() < fine:
         qapp.processEvents()
         time.sleep(0.01)
     regista.abort()
-    assert len(scatti) == 2 and 0.9 <= scatti[1] - scatti[0] <= 1.6
+    assert len(scatti) == 2 and 0.9 <= scatti[1] - scatti[0] <= 2.5

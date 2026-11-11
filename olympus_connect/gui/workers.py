@@ -480,6 +480,13 @@ class TimelapseWorker(QObject):
         if processo is not None and processo.poll() is None:
             processo.terminate()
 
+    def _kill_process(self) -> None:
+        """Dopo un errore imprevisto ffmpeg non deve restare a lavorare da solo."""
+        processo = self._process
+        if processo is not None and processo.poll() is None:
+            processo.kill()
+            processo.wait()
+
     @pyqtSlot()
     def run(self) -> None:
         ffmpeg = self._ffmpeg or find_ffmpeg()
@@ -506,9 +513,14 @@ class TimelapseWorker(QObject):
                     errori.seek(0)
                     messaggio = errori.read().decode("utf-8", "replace").strip()
         except Exception as exc:
+            self._kill_process()
             parziale.unlink(missing_ok=True)
             self.failed.emit(f"Il montaggio del video non è riuscito: {exc}")
             return
+        finally:
+            processo = self._process
+            if processo is not None and processo.stdout is not None:
+                processo.stdout.close()
         if self._cancel.is_set():
             parziale.unlink(missing_ok=True)
             self.cancelled.emit()

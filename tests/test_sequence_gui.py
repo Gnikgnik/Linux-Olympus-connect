@@ -66,11 +66,13 @@ def test_stepper_wheel_and_list(qapp):
 
 def test_a_disabled_stepper_does_not_move(qapp):
     s = SpanStepper("Intervallo", INTERVALS, 5)
+    visti = []
+    s.changed.connect(visti.append)
     s.setEnabled(False)
     s.step(1)
     s.choose(10)
     s.wheelEvent(_rotella(True))
-    assert s.value() == 5
+    assert s.value() == 5 and visti == []
 
 
 # -- SequenceSection ----------------------------------------------------------------
@@ -147,6 +149,10 @@ def test_dialog_not_now_downloads_nothing(qapp):
     d._later.click()
     assert d.result() == QDialog.DialogCode.Rejected
     assert d.choice().download is False
+    chiusa = SequenceEndDialog(photos=10)
+    chiusa.reject()                                 # Esc, o la X della finestra
+    assert chiusa.choice().download is False
+    assert [chiusa._fps.itemText(i) for i in range(chiusa._fps.count())] == ["24", "25", "30"]
 
 
 def test_dialog_video_choices_follow_the_checkbox(qapp):
