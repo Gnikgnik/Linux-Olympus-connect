@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from olympus_connect.core.downloader import (
-    Job, JobState, Outcome, download, pending, plan,
+    Job, JobState, Outcome, download, pending, plan, plan_flat,
 )
 from olympus_connect.core.errors import CameraAsleep
 from olympus_connect.core.model import MediaFile, MediaKind
@@ -41,6 +41,16 @@ def test_plan_marks_existing_file_with_different_size_as_incomplete(tmp_path):
     dest.write_bytes(b"x" * 42)
 
     assert plan([media(size=1000)], tmp_path)[0].state is JobState.INCOMPLETE
+
+
+def test_plan_flat_puts_every_file_in_one_folder_with_the_same_states(tmp_path):
+    cartella = tmp_path / "Sequenza 2026-11-11 14.30"
+    cartella.mkdir()
+    (cartella / "P2.JPG").write_bytes(b"x" * 1000)
+    (cartella / "P3.JPG").write_bytes(b"x" * 10)
+    jobs = plan_flat([media("P1.JPG"), media("P2.JPG"), media("P3.JPG")], cartella)
+    assert [j.dest for j in jobs] == [cartella / "P1.JPG", cartella / "P2.JPG", cartella / "P3.JPG"]
+    assert [j.state for j in jobs] == [JobState.NEW, JobState.PRESENT, JobState.INCOMPLETE]
 
 
 def test_plan_puts_undated_file_in_senza_data(tmp_path):
