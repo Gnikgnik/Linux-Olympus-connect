@@ -100,6 +100,7 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 - **Tre scatti saltati di fila:** la sequenza si ferma con «Sequenza interrotta: la fotocamera non risponde», e segue la fine sequenza con le foto fatte.
 - **Telecomando non pronto troppo a lungo senza uno scatto in corso** (rientro nel live che non riesce, «Riprova» a schermo): ogni periodo di `max(intervallo, 30 s)` passato oltre lo scatto dovuto senza che il telecomando torni pronto conta come uno scatto saltato. L'attesa di uno scatto in corso (pose lunghe) non conta mai.
 - **Live fermo dopo uno scatto:** vale la ripartenza automatica esistente (rientro in rec alla fine dell'anteprima, modalità rimessa).
+- **Live fermo fra due scatti, durante una sequenza:** parte da solo lo stesso rientro in rec, senza aspettare «Riprova»: nessuno è lì a premerlo. Se il rientro non riesce, vale la regola del telecomando non pronto.
 - **Uscita dal telecomando o chiusura della finestra con la sequenza attiva:** domanda di conferma («La sequenza si fermerà.»). Uscendo, segue la fine sequenza; chiudendo la finestra, no.
 - **Sospensione del PC:** per tutta la sequenza un processo `systemd-inhibit --what=sleep:idle` tiene sveglio il PC; se il comando manca, un avviso nella barra di stato e la sequenza parte lo stesso.
 
@@ -113,6 +114,8 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 4. **Scarica:** i JPEG vanno in `<destinazione>/Sequenza AAAA-MM-GG HH.MM/` (ora di avvio della sequenza; se la cartella esiste, ` (2)`, ` (3)`…), con i nomi della fotocamera, senza sottocartelle per data. Usa lo scarico esistente (verifica della dimensione, pausa, Riprova). Se la fotocamera nel frattempo si è spenta, lo scarico si ferma con il Riprova di sempre: l'elenco della sequenza resta in memoria finché l'app è aperta.
 5. **Video**, a scarico finito: `timelapse.mp4` nella stessa cartella. Avanzamento nella barra di stato («Montaggio del video: 120 di 358»), con Annulla. Se fallisce o viene annullato, il file parziale si cancella, le foto restano e la barra di stato dice perché.
 6. **Non ora:** nient'altro; le foto restano sulla scheda e si vedono nella griglia.
+
+La finestra di fine sequenza non blocca il programma (`open()`): i worker continuano a parlare con la finestra principale. Se l'elenco dopo l'uscita fallisce, la sequenza resta in attesa e la finestra compare al primo elenco riuscito (pulsante Aggiorna). Lo scarico di una sequenza non segna i file come «già scaricati» nell'elenco, perché vanno in un'altra cartella.
 
 ### Il video
 
@@ -131,21 +134,21 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 
 **`core/timelapse.py`** (nuovo): `find_ffmpeg()`, `RESOLUTIONS`, `FRAME_RATES`, `link_frames(files, folder)`, `build_command(ffmpeg, frames_dir, fps, size, out)`, `parse_progress(line) -> int | None`.
 
-**`core/power.py`** (nuovo): `SleepInhibitor` con `start() -> bool` e `stop()`; un processo figlio `systemd-inhibit … sleep infinity`, terminato in `stop()` e alla distruzione.
+**`core/power.py`** (nuovo): `SleepInhibitor` con `start(seconds) -> bool`, `active()` e `stop()`; un processo figlio `systemd-inhibit … sleep <durata + 600>` in un gruppo di processi suo, chiuso tutto insieme in `stop()`. La durata finita fa sì che, se l'app muore male, il blocco non resti per sempre.
 
 **`core/downloader.py`**: `plan_flat(files, folder) -> list[Job]`, come `plan` ma con destinazione `folder / media.name`.
 
-**`core/protocol.py`**: nessun comando nuovo. `list_media` serve anche in modalità scatto (verificato); `stop_liveview`/`start_liveview` esistono già.
+**`core/protocol.py`**: nessun comando nuovo; `list_media(directory, switch_to_play=True)` guadagna il parametro `switch_to_play`: con `False` non passa in riproduzione, per l'istantanea in modalità scatto (verificato). `stop_liveview`/`start_liveview` esistono già.
 
 ### GUI
 
 **`gui/sequence.py`** (nuovo):
 - `SpanStepper(QWidget)`: selettore di un valore fra quelli di un elenco (freccette, rotella, elenco al clic), con gli stessi stili di `PropStepper` (`#propValue`, `#propArrow`) ma senza fotocamera: nessuna pausa, nessuno stato «in attesa», segnale `changed(int)` immediato. `PropStepper` resta com'è.
 - `SequenceSection(QWidget)`: due `SpanStepper`, il riepilogo, Avvia/Ferma, le due righe di avanzamento. Segnali `start_requested(interval, duration)`, `stop_requested()`. Metodi `set_summary(text)`, `set_running(bool)`, `set_progress(text, text)`, `set_enabled(bool)`.
-- `SequenceController(QObject)`: possiede `SequenceState`, un `QTimer` da 200 ms e il `SleepInhibitor`. Segnali `shoot_requested()`, `progress(str, str)`, `ended(taken, skipped, aborted, started_at)`. Metodi `start(plan, busy)`, `stop()`, `set_ready(bool)`, `shot_done(ok)`, `is_running()`. Non conosce la finestra.
+- `SequenceController(QObject)`: possiede `SequenceState`, un `QTimer` da 200 ms e il `SleepInhibitor`. Costruito con una funzione `ready()` che la finestra gli passa e che legge a ogni giro (niente `set_ready`: lo stato del telecomando cambia in troppi punti per notificarli tutti). Segnali `shoot_requested()`, `wake_requested()` (5 s prima di uno scatto: il live in pausa va riacceso), `progress(str, str)`, `ended(SequenceResult)`. Metodi `start(plan, busy) -> bool` (falso se il PC non è stato bloccato), `stop()`, `abort() -> SequenceResult | None` (subito e senza segnale, per l'uscita e la chiusura), `shot_done(ok)`, `may_pause_live()`, `is_running()`, `tick()`. Non conosce la finestra. Chi riceve `shoot_requested` fa partire lo scatto oppure chiama `shot_done(False)`.
 - `SequenceEndDialog(QDialog)`: la finestra di fine sequenza; restituisce scarico sì/no, video sì/no, risoluzione, fotogrammi al secondo.
 
-**`gui/workers.py`**: `TimelapseWorker(QObject)` su un suo thread, con `progress(int, int)`, `done(path)`, `failed(str)`, `cancel()`. `RemoteWorker` riceve tre comandi: `snapshot_names()` (istantanea dei nomi, segnale `names_read(object)`), `pause_live()` e `resume_live(port)` (segnale `live_resumed(bool)`).
+**`gui/workers.py`**: `TimelapseWorker(QObject)` su un suo thread, con `progress(int, int)`, `done(path)`, `failed(str)`, `cancel()`. `RemoteWorker` riceve tre comandi: `snapshot_names()` (istantanea dei nomi, segnale `names_read(object)`), `pause_live()` e `resume_live(port)` (segnale `live_resumed(bool)`). `TimelapseWorker` ha anche il segnale `cancelled()`.
 
 **`gui/remote.py`**: `RemotePanel` aggiunge `self.sequence = SequenceSection()`; `_refresh` la spegne quando lo è Scatta, tranne il pulsante Ferma durante una sequenza.
 
