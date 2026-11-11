@@ -49,6 +49,22 @@ def plan(files: Iterable[MediaFile], dest_root: Path) -> list[Job]:
     return jobs
 
 
+def plan_flat(files: Iterable[MediaFile], folder: Path) -> list[Job]:
+    """Come plan(), ma tutti i file in una sola cartella, con il nome della
+    fotocamera: è la cartella dedicata di una sequenza."""
+    jobs: list[Job] = []
+    for media in files:
+        dest = Path(folder) / media.name
+        if not dest.exists():
+            state = JobState.NEW
+        elif dest.stat().st_size == media.size:
+            state = JobState.PRESENT
+        else:
+            state = JobState.INCOMPLETE
+        jobs.append(Job(media, dest, state))
+    return jobs
+
+
 def pending(jobs: Iterable[Job]) -> list[Job]:
     """I job da trasferire, dal più piccolo al più grande.
 
