@@ -206,6 +206,7 @@ class _Finta:
         self.rompi_allo_scatto: int | None = None    # solleva un errore a questo scatto
         self.muta_dopo_attesa = False        # non risponde alla prima richiesta dopo l'attesa
         self.elenco_rec_vecchio = False      # in modalità scatto l'elenco non si aggiorna
+        self.elenco_rec_in_ritardo = False   # in modalità scatto manca l'ultima foto
         self.live = False
         self.in_rec = False
         self.appena_rientrata = False
@@ -235,6 +236,8 @@ class _Finta:
                 return b"VER_100\n/DCIM,100OLYMP,0,16,1,1\n"
             file = (self.file_all_ingresso if self.in_rec and self.elenco_rec_vecchio
                     else self.file)
+            if self.in_rec and self.elenco_rec_in_ritardo and self.scatti:
+                file = file[:-2]
             return ("VER_100\n" + "".join(f"/DCIM/100OLYMP,{n},5,0,1,1\n" for n in file)).encode()
         if nome == "get_camprop.cgi":
             valore = {"takemode": self.modo, "shutspeedvalue": self.tempo,
@@ -365,6 +368,14 @@ def test_a_stale_listing_in_shooting_mode_is_reported(finta, tmp_path):
     finta.elenco_rec_vecchio = True
     assert ps.main() == 0
     assert "2. elenco in modalità scatto: risponde ma non vede le foto nuove" in _referto(tmp_path)
+
+
+def test_a_listing_one_shot_behind_is_not_complete(finta, tmp_path):
+    # sul campo (2026-11-11): letto subito dopo 15 scatti, l'elenco ne mostrava 14
+    finta.elenco_rec_in_ritardo = True
+    assert ps.main() == 0
+    assert ("risponde, 28 file nuovi dopo gli scatti (JPG 14, ORF 14); "
+            "uguale a quello in riproduzione: sì; completo dopo gli scatti: no") in _referto(tmp_path)
 
 
 def test_a_camera_asleep_after_the_wait_is_told_apart(finta, tmp_path):

@@ -463,3 +463,22 @@ Dopo la risposta `stoptake` e `getrecview` sono immediati e la fotocamera torna 
 **Seconda prova delle pose lunghe** (dopo la correzione): 60" in M, risposta in circa 2 min 10 s, anteprima visibile, e circa 2 s dopo (fine dell'anteprima) il live riparte da solo. Modalità di scatto: singolo, silenzioso, raffica H e L con le varianti, tutte confermate; l'autoscatto non compare. Scoperta: **rientrare in rec (`switch_cammode` play→rec) rimette la modalità della ghiera fisica**: dopo la ripartenza la fotocamera era tornata da M (scelta dal PC) ad A (la ghiera). Correzione: dopo un rientro nel live (automatico o con Riprova) l'app rimette la modalità scelta prima; i valori di quella modalità li tiene la fotocamera. All'ingresso nel telecomando invece si segue la ghiera.
 
 **Terza prova** (ghiera su A): in M, tempo 8" e diaframma da f/20 a f/9 dal pannello, scatto con risposta in circa 17 s e anteprima; il live è ripartito da solo, quindi la rimessa della modalità dopo un rientro non è entrata in gioco (provata solo nei test). Uscita e nuovo ingresso nel telecomando: il pannello segue la ghiera (A), come previsto.
+
+## Sequenze: prova sul campo (2026-11-11)
+
+Script `tools/prova_sequenza.py`, senza Internet, ghiera su A, tempo 1/250, scatto singolo anti-vibrazione, riduzione rumore automatica, RAW+JPEG. 18 foto, nessuna impostazione cambiata, ritorno in riproduzione riuscito. Durata 13 minuti.
+
+| Punto | Misura | Valore |
+|---|---|---|
+| 1. Ritmo | ciclo con anteprima (10 scatti) | mediana 1,0 s, da 0,8 a 1,2 s |
+| | ciclo senza anteprima (5 scatti, alternati) | mediana 0,7 s, massimo 0,9 s |
+| | risposta a `starttake` | da 0,57 a 1,07 s; `stoptake` 0,02–0,05 s; `getrecview` 0,12–0,15 s (circa 270 kB) |
+| 2. Elenco in modalità scatto | `get_imglist` in rec | HTTP 200 in 0,14–0,28 s, uguale a quello letto in riproduzione; il live continua |
+| | letto subito dopo 15 scatti | 28 file nuovi (14 JPG, 14 ORF): **manca l'ultimo scatto**, che compare poco dopo (alla fine i file nuovi sono 36 per 18 foto, due per scatto) |
+| 3. Live spento | `starttake` a live spento | HTTP 520, `errorcode` 1004 in 0,03 s |
+| | `startliveview` senza play→rec | risponde in 0,31 s, primo pacchetto dopo 0,33 s; scatto successivo riuscito |
+| | flusso del live | circa 2,6 MB/s a regime (1770 pacchetti al secondo), uguale dopo la riaccensione; 1,4 MB/s nel secondo subito dopo una raffica di scatti |
+| 4. Intervalli lunghi | 5 minuti con il live acceso | il live continua per tutta l'attesa; scatto riuscito in 0,8 s |
+| | 5 minuti con il live spento, nessuna richiesta | nessun pacchetto; `startliveview` risponde in 0,35 s, live dopo 0,37 s, scatto riuscito in 0,6 s |
+
+La modalità dopo la riaccensione era quella di prima, ma la prova non cambia modalità: resta da verificare con l'app che una modalità scelta dal PC sopravviva a `stopliveview`/`startliveview` (il rientro play→rec, invece, la riporta alla ghiera). Lo script, in questa prima versione, scriveva «completo dopo gli scatti: sì» anche con l'ultimo scatto mancante: il controllo è stato corretto dopo la prova.

@@ -577,8 +577,11 @@ def _chiusura(e: Esiti, svuota: Svuota | None, prima_play: list[str] | None) -> 
         if stato == "200" and prima_play is not None:
             e.nuovi_sulla_scheda = nuovi(prima_play, dopo)
             if e.stato_elenco_rec == "200":
+                # quanti file nascono per scatto lo dice solo l'elenco finale
                 n = len(e.nuovi_in_rec)
-                e.elenco_rec_completo = (n >= e.scatti_ritmo > 0
+                per_scatto = len(e.nuovi_sulla_scheda) / e.foto if e.foto else 0
+                attesi = round(e.scatti_ritmo * per_scatto)
+                e.elenco_rec_completo = (0 < attesi <= n
                                          and e.nuovi_in_rec == e.nuovi_sulla_scheda[:n])
     _sicuro("elenco finale", scheda)
     for riga in riassunto(e):

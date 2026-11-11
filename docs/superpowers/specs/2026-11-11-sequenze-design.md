@@ -1,7 +1,7 @@
 # Telecomando, pezzo E1: sequenze (intervallometro e timelapse) — Design
 
 **Data:** 2026-11-11
-**Stato:** approvato in sessione; l'intervallo minimo, il live spento fra gli scatti, il riconoscimento delle foto e il comportamento negli intervalli lunghi si fissano con la prova sul campo descritta più avanti, che fa da cancello
+**Stato:** approvato in sessione; cancello superato il 2026-11-11, esiti e decisioni nella sezione «Esito della prova»
 **Obiettivo:** dal pannello del telecomando, far scattare la fotocamera a intervalli regolari per una durata scelta, e alla fine scaricare i JPEG della sequenza in una cartella dedicata e montarli in un video.
 
 Segue le specifiche del telecomando (`2026-11-06-telecomando-design.md`, pezzi A–C) e delle impostazioni dal PC (`2026-11-08-impostazioni-dal-pc-design.md`, pezzo D), fatti e verificati sul campo. Il pezzo E è diviso in due: **E1, le sequenze** (questa specifica) ed **E2, la posa B** (specifica propria, dopo).
@@ -27,7 +27,7 @@ Dalle prove sul campo dei pezzi A–D (`docs/field-report-2026-09-24.md`) e da `
 - `set_timeout.cgi` risponde 520: il tempo di spegnimento automatico non si imposta dal PC.
 - Sul PC dell'utente ci sono `ffmpeg` (con `libx264`) e `systemd-inhibit`.
 
-**Non ancora noto**, e deciso dalla prova: il tempo fra due scatti rapidi; se `get_imglist` risponde in modalità scatto; se il live si può spegnere e riaccendere senza rientrare in rec; se la fotocamera si addormenta negli intervalli lunghi.
+**Non noto alla stesura**, e deciso dalla prova (vedi «Esito della prova»): il tempo fra due scatti rapidi; se `get_imglist` risponde in modalità scatto; se il live si può spegnere e riaccendere senza rientrare in rec; se la fotocamera si addormenta negli intervalli lunghi.
 
 ## Prova sul campo (cancello)
 
@@ -52,6 +52,21 @@ Script `tools/prova_sequenza.py` (nel repository), che gira **senza Internet** (
 
 Gli esiti si annotano in `docs/field-report-2026-09-24.md` e in questa specifica, in una nuova sezione «Esito della prova» subito dopo questa, prima di scrivere il piano della parte 2.
 
+## Esito della prova
+
+Eseguita il 2026-11-11 (ghiera su A, 1/250, scatto singolo, RAW+JPEG); misure in `docs/field-report-2026-09-24.md`, sezione «Sequenze: prova sul campo».
+
+| Punto | Esito | Decisione |
+|---|---|---|
+| 1 | ciclo mediano 1,0 s con anteprima (massimo 1,2 s), 0,7 s senza: l'anteprima costa 0,3 s | **intervallo minimo 2 s**; l'anteprima si chiede sempre |
+| 2 | l'elenco risponde in rec in 0,14–0,28 s ed è uguale a quello in riproduzione, ma letto subito dopo uno scatto non contiene ancora quella foto | **istantanea dei nomi all'avvio della sequenza**, presa non prima di 3 s dalla fine dell'ultimo scatto (se serve, l'avvio aspetta); le foto della sequenza sono i JPEG nuovi rispetto all'istantanea, letti in riproduzione a fine sequenza. Se l'istantanea fallisce, vale la regola di riserva: foto nuove dall'ingresso nel telecomando, e la finestra finale lo dice |
+| 3 | a live spento lo scatto è rifiutato (1004); `startliveview` da solo fa ripartire il live in 0,3 s, alla stessa qualità | **con intervallo ≥ 60 s il live si spegne fra gli scatti** (`stopliveview` alla fine dell'anteprima) e si riaccende **5 s prima** dello scatto successivo (0,3 s misurati più 3 s, minimo 5 s). Se alla riaccensione il live non arriva entro 3 s, vale il rientro in rec esistente, con la modalità rimessa |
+| 4 | dopo 5 minuti ferma la fotocamera risponde subito, con il live acceso e con il live spento | **nessuna richiesta fra gli scatti**. Gli intervalli di 10, 15 e 30 minuti restano offerti: la prova finale ne verifica uno da 15 minuti, e se la fotocamera non risponde vale la riga «non risponde» della tabella del cancello |
+
+Due cose restano da verificare nella prova finale con l'app, perché la prova sul campo non cambia impostazioni: che una modalità scelta dal PC resti quella dopo `stopliveview`/`startliveview`, e un'attesa di 15 minuti a live spento.
+
+Ogni scatto produce due file (JPG e ORF) con la fotocamera in RAW+JPEG.
+
 ## Comportamento
 
 ### Il pannello
@@ -59,19 +74,21 @@ Gli esiti si annotano in `docs/field-report-2026-09-24.md` e in questa specifica
 Sotto «Impostazioni», la sezione **Sequenza**:
 
 - **Intervallo** e **Durata**: due selettori come quelli delle impostazioni (freccette, rotella, elenco al clic), con valori pronti.
-  - Intervallo: 2, 3, 5, 8, 10, 15, 20, 30, 45 s; 1, 2, 3, 5, 10, 15, 30 min. I valori sotto il minimo della prova non compaiono. Valore iniziale 5 s (o il minimo, se più alto).
+  - Intervallo: 2, 3, 5, 8, 10, 15, 20, 30, 45 s; 1, 2, 3, 5, 10, 15, 30 min (il minimo della prova è 2 s: l'elenco è tutto offerto). Valore iniziale 5 s.
   - Durata: 5, 10, 15, 20, 30, 45 min; 1 h, 1 h 30, 2, 3, 4, 6, 8, 12 h. Valore iniziale 30 min.
 - **Riepilogo**, una riga che si aggiorna a ogni cambio di intervallo, durata o impostazioni: «360 scatti · video di 14 s a 25 fps» (i fotogrammi al secondo sono gli ultimi scelti). Se l'occupazione stimata dello scatto supera l'intervallo: «la posa dura più dell'intervallo: scatti uno dopo l'altro, circa 15 in 30 min» (60" con riduzione rumore: un ciclo di 121 s).
 - **Avvia sequenza**, attivo quando lo è Scatta.
 
 Intervallo, durata, fotogrammi al secondo e risoluzione si ricordano fra una sessione e l'altra (`QSettings`, chiavi `sequence/…`).
 
-Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s», «Mancano 26 min» e il pulsante **Ferma sequenza**. Scatta, Registra, i selettori delle impostazioni e i clic di messa a fuoco sono spenti. Il live resta visibile; dopo ogni scatto l'anteprima copre il live per 2 s, o per metà dell'intervallo se è più breve (dove il cancello toglie l'anteprima, il live resta scoperto).
+Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s», «Mancano 26 min» e il pulsante **Ferma sequenza**. Scatta, Registra, i selettori delle impostazioni e i clic di messa a fuoco sono spenti. Il live resta visibile; dopo ogni scatto l'anteprima copre il live per 2 s, o per metà dell'intervallo se è più breve. Con intervallo di almeno 60 s il live si spegne alla fine dell'anteprima (al suo posto il messaggio «Live in pausa fino al prossimo scatto») e si riaccende 5 s prima dello scatto.
 
 ### I tempi
 
 - Il primo scatto parte all'avvio (istante `t0`). Lo scatto `k` è dovuto a `t0 + k × intervallo`.
 - Uno scatto dovuto parte solo quando il telecomando è pronto: ingresso confermato, nessuno scatto in corso, nessuna uscita in corso. Se non lo è, parte appena lo diventa.
+- All'avvio l'app prende l'istantanea dei nomi dei file; `t0` è l'istante in cui l'istantanea è arrivata (o è fallita).
+- Con il live in pausa, il telecomando è pronto solo quando il live è stato riacceso; la riaccensione parte 5 s prima dello scatto dovuto.
 - Se all'istante in cui il telecomando torna pronto sono già scaduti più scatti, ne parte **uno solo**; quelli scaduti nel frattempo non si recuperano e non contano come saltati.
 - Scaduta la durata (`t0 + durata`) non parte più nessuno scatto; quello in corso finisce. La sequenza è finita quando la durata è scaduta e nessuno scatto è in corso.
 - Numero di scatti previsto: `ceil(durata / max(intervallo, occupazione stimata + 1 s))`, dove l'occupazione viene da `shot_busy_seconds` (zero se ignota).
@@ -89,7 +106,7 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 ### Fine sequenza
 
 1. L'app esce dal telecomando come farebbe l'utente tornando alle miniature: live spento, fotocamera in riproduzione, elenco riletto.
-2. Dall'elenco riletto ricava i **JPEG della sequenza** (regola decisa dal punto 2 della prova), nell'ordine della scheda.
+2. Dall'elenco riletto ricava i **JPEG della sequenza**: quelli nuovi rispetto all'istantanea presa all'avvio (vedi «Esito della prova», punto 2), nell'ordine della scheda.
 3. Mostra la finestra di fine sequenza: «Sequenza finita: 358 foto (2 saltate).», la domanda «Scaricarle in una cartella dedicata?», la casella **Monta il video** (accesa), **Risoluzione** (Full HD 1920×1080, 4K 3840×2160) e **Fotogrammi al secondo** (24, 25, 30), i pulsanti **Scarica** e **Non ora**.
    - Nessun JPEG fra i file nuovi (fotocamera in solo RAW): la finestra dice «La fotocamera ha salvato solo RAW: niente da scaricare qui, niente video» e offre solo **Chiudi**.
    - `ffmpeg` assente, o meno di due foto: la casella del video è spenta, con il motivo.
@@ -118,7 +135,7 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 
 **`core/downloader.py`**: `plan_flat(files, folder) -> list[Job]`, come `plan` ma con destinazione `folder / media.name`.
 
-**`core/protocol.py`**: nessun comando nuovo se non quelli che il cancello richiede (lettura dei nomi in rec; `stop_liveview`/`start_liveview` esistono già).
+**`core/protocol.py`**: nessun comando nuovo. `list_media` serve anche in modalità scatto (verificato); `stop_liveview`/`start_liveview` esistono già.
 
 ### GUI
 
@@ -128,7 +145,7 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 - `SequenceController(QObject)`: possiede `SequenceState`, un `QTimer` da 200 ms e il `SleepInhibitor`. Segnali `shoot_requested()`, `progress(str, str)`, `ended(taken, skipped, aborted, started_at)`. Metodi `start(plan, busy)`, `stop()`, `set_ready(bool)`, `shot_done(ok)`, `is_running()`. Non conosce la finestra.
 - `SequenceEndDialog(QDialog)`: la finestra di fine sequenza; restituisce scarico sì/no, video sì/no, risoluzione, fotogrammi al secondo.
 
-**`gui/workers.py`**: `TimelapseWorker(QObject)` su un suo thread, con `progress(int, int)`, `done(path)`, `failed(str)`, `cancel()`. `RemoteWorker` riceve solo ciò che il cancello richiede (istantanea dei nomi, live spento/riacceso, lettura leggera).
+**`gui/workers.py`**: `TimelapseWorker(QObject)` su un suo thread, con `progress(int, int)`, `done(path)`, `failed(str)`, `cancel()`. `RemoteWorker` riceve tre comandi: `snapshot_names()` (istantanea dei nomi, segnale `names_read(object)`), `pause_live()` e `resume_live(port)` (segnale `live_resumed(bool)`).
 
 **`gui/remote.py`**: `RemotePanel` aggiunge `self.sequence = SequenceSection()`; `_refresh` la spegne quando lo è Scatta, tranne il pulsante Ferma durante una sequenza.
 
@@ -146,8 +163,10 @@ Mentre la sequenza gira la sezione mostra «Scatto 42 di 360 · prossimo fra 3 s
 Con l'app, senza Internet, registro in `diag-downloads/`:
 1. Timelapse di giorno: intervallo minimo offerto, 5 minuti; scarico e video in Full HD a 25.
 2. Pose lunghe: M, 15", intervallo 5 s, 5 minuti: scatti uno dopo l'altro, riepilogo coerente, live che riparte.
-3. Intervallo lungo: 2 minuti per 15 minuti: live spento fra gli scatti (se il cancello lo permette), nessuno scatto saltato.
-4. Ferma a metà; uscita dal telecomando a metà (conferma); «Non ora» alla fine.
+3. Intervallo lungo: 2 minuti per 15 minuti in M (modalità scelta dal PC, ghiera su A): live in pausa fra gli scatti, nessuno scatto saltato, e la modalità resta M dopo ogni riaccensione.
+4. Attesa lunga: intervallo di 15 minuti per 30 minuti (tre scatti): la fotocamera risponde ancora dopo 15 minuti a live spento.
+5. Ferma a metà; uscita dal telecomando a metà (conferma); «Non ora» alla fine.
+6. Uno scatto a mano subito prima di Avvia: quella foto non deve finire fra quelle della sequenza.
 
 L'esito va in `docs/field-report-2026-09-24.md`.
 

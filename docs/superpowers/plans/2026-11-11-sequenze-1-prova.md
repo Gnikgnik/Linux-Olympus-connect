@@ -31,7 +31,7 @@
 - Consumes: niente dal pacchetto `olympus_connect` (lo strumento è autonomo, come `tools/prova_impostazioni.py`). Fixture esistenti: `tests/fixtures/imglist_dcim.csv`, `tests/fixtures/imglist_dcim_100olymp.csv` (1161 file).
 - Produces: il referto `diag-downloads/prova_sequenza.txt`, che finisce con la sezione `== ESITO ==`: una riga per ognuno dei quattro punti del cancello (`1. ritmo`, `2. elenco in modalità scatto`, `3. …live spento…`, `4. dopo l'attesa…`), eventuali righe `ATTENZIONE` o `NON VALIDO`, e la riga `foto scattate dalla prova`. Il Task 2 legge quelle righe.
 
-**Nota:** una bozza dei due file esiste già nell'albero di lavoro, scritta e fatta girare mentre si stendeva questo piano (33 test verdi, serie completa a 623), poi rivista da un revisore indipendente e corretta. Se i file ci sono e coincidono con il codice qui sotto, i passi 1–3 si riducono a controllarlo; i passi 4–5 valgono comunque.
+**Nota:** una bozza dei due file esiste già nell'albero di lavoro, scritta e fatta girare mentre si stendeva questo piano (34 test verdi, serie completa a 624), poi rivista da un revisore indipendente e corretta. Se i file ci sono e coincidono con il codice qui sotto, i passi 1–3 si riducono a controllarlo; i passi 4–5 valgono comunque.
 
 - [ ] **Step 1: Scrivi i test**
 
@@ -246,6 +246,7 @@ class _Finta:
         self.rompi_allo_scatto: int | None = None    # solleva un errore a questo scatto
         self.muta_dopo_attesa = False        # non risponde alla prima richiesta dopo l'attesa
         self.elenco_rec_vecchio = False      # in modalità scatto l'elenco non si aggiorna
+        self.elenco_rec_in_ritardo = False   # in modalità scatto manca l'ultima foto
         self.live = False
         self.in_rec = False
         self.appena_rientrata = False
@@ -275,6 +276,8 @@ class _Finta:
                 return b"VER_100\n/DCIM,100OLYMP,0,16,1,1\n"
             file = (self.file_all_ingresso if self.in_rec and self.elenco_rec_vecchio
                     else self.file)
+            if self.in_rec and self.elenco_rec_in_ritardo and self.scatti:
+                file = file[:-2]
             return ("VER_100\n" + "".join(f"/DCIM/100OLYMP,{n},5,0,1,1\n" for n in file)).encode()
         if nome == "get_camprop.cgi":
             valore = {"takemode": self.modo, "shutspeedvalue": self.tempo,
@@ -405,6 +408,14 @@ def test_a_stale_listing_in_shooting_mode_is_reported(finta, tmp_path):
     finta.elenco_rec_vecchio = True
     assert ps.main() == 0
     assert "2. elenco in modalità scatto: risponde ma non vede le foto nuove" in _referto(tmp_path)
+
+
+def test_a_listing_one_shot_behind_is_not_complete(finta, tmp_path):
+    # sul campo (2026-11-11): letto subito dopo 15 scatti, l'elenco ne mostrava 14
+    finta.elenco_rec_in_ritardo = True
+    assert ps.main() == 0
+    assert ("risponde, 28 file nuovi dopo gli scatti (JPG 14, ORF 14); "
+            "uguale a quello in riproduzione: sì; completo dopo gli scatti: no") in _referto(tmp_path)
 
 
 def test_a_camera_asleep_after_the_wait_is_told_apart(finta, tmp_path):
@@ -1058,8 +1069,11 @@ def _chiusura(e: Esiti, svuota: Svuota | None, prima_play: list[str] | None) -> 
         if stato == "200" and prima_play is not None:
             e.nuovi_sulla_scheda = nuovi(prima_play, dopo)
             if e.stato_elenco_rec == "200":
+                # quanti file nascono per scatto lo dice solo l'elenco finale
                 n = len(e.nuovi_in_rec)
-                e.elenco_rec_completo = (n >= e.scatti_ritmo > 0
+                per_scatto = len(e.nuovi_sulla_scheda) / e.foto if e.foto else 0
+                attesi = round(e.scatti_ritmo * per_scatto)
+                e.elenco_rec_completo = (0 < attesi <= n
                                          and e.nuovi_in_rec == e.nuovi_sulla_scheda[:n])
     _sicuro("elenco finale", scheda)
     for riga in riassunto(e):
@@ -1103,10 +1117,10 @@ if __name__ == "__main__":
 - [ ] **Step 4: Verifica**
 
 Run: `.venv/bin/python -m pytest -q tests/test_prova_sequenza.py`
-Expected: `33 passed`.
+Expected: `34 passed`.
 
 Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `623 passed` (590 di prima più 33).
+Expected: `624 passed` (590 di prima più 34).
 
 Run: `git check-ignore -q diag-downloads/prova_sequenza.txt && echo ignorato`
 Expected: `ignorato`.
