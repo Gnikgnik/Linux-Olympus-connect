@@ -156,6 +156,10 @@ class MediaListModel(QAbstractTableModel):
         self._reapply_filter()
         self.endResetModel()
 
+    def camera_paths(self) -> set[str]:
+        """I percorsi sulla fotocamera di tutti i file dell'elenco, filtri ignorati."""
+        return {job.media.camera_path for job in self._all}
+
     def set_filter(self, media_filter: MediaFilter) -> None:
         self.beginResetModel()
         self._filter = media_filter

@@ -3,6 +3,10 @@ l'unico punto in cui i due mondi si incontrano."""
 from __future__ import annotations
 
 import errno
+import os
+import subprocess
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -19,6 +23,7 @@ from ..core.errors import (
 )
 from ..core.camprops import shot_busy_seconds, shot_timeout
 from ..core.protocol import LIVE_QUALITY
+from ..core.timelapse import build_command, find_ffmpeg, link_frames, parse_progress
 
 
 def describe_error(exc: Exception) -> str:
@@ -291,6 +296,8 @@ class RemoteWorker(QObject):
     props_read = pyqtSignal(object)       # dict[str, CameraProp]
     props_failed = pyqtSignal(str)
     exposing = pyqtSignal(float)          # secondi stimati di posa lunga, prima di starttake
+    names_read = pyqtSignal(object)       # set[str] dei percorsi sulla scheda, o None
+    live_resumed = pyqtSignal(bool)       # startliveview dopo una pausa: riuscito o no
 
     # Sotto questa occupazione stimata lo scatto non si annuncia: con 2" sul
     # campo starttake è tornato dopo circa 2 s e tutto ha funzionato.
@@ -395,6 +402,35 @@ class RemoteWorker(QObject):
         self.read_props()
 
     @pyqtSlot()
+    def snapshot_names(self) -> None:
+        """L'elenco della scheda all'inizio di una sequenza, senza uscire dalla
+        modalità scatto. None se non riesce: la finestra usa la regola di riserva."""
+        try:
+            nomi = {m.camera_path for m in self._client.list_media(switch_to_play=False)}
+        except Exception:
+            nomi = None
+        self.names_read.emit(nomi)
+
+    @pyqtSlot()
+    def pause_live(self) -> None:
+        """Spegne il live fra due scatti di una sequenza. Se non riesce il live
+        resta acceso, e non è un errore da mostrare."""
+        try:
+            self._client.stop_liveview()
+        except Exception:
+            pass
+
+    @pyqtSlot(int)
+    def resume_live(self, port: int) -> None:
+        """Riaccende il live senza rientrare in modalità scatto (0,3 s sul campo)."""
+        try:
+            self._client.start_liveview(port)
+        except Exception:
+            self.live_resumed.emit(False)
+            return
+        self.live_resumed.emit(True)
+
+    @pyqtSlot()
     def leave(self) -> None:
         """Ogni passo è tentato anche se il precedente fallisce: la
         fotocamera deve tornare in riproduzione in ogni caso."""
@@ -411,3 +447,76 @@ class RemoteWorker(QObject):
             except Exception:
                 pass
         self.left.emit()
+
+
+class TimelapseWorker(QObject):
+    """Monta il video di una sequenza con ffmpeg, su un thread proprio.
+
+    Scrive in «<video>.part» e rinomina solo a montaggio riuscito: un file
+    col nome definitivo è sempre un video intero. Se fallisce o viene
+    annullato il parziale si cancella; le foto non si toccano mai.
+    """
+
+    progress = pyqtSignal(int, int)       # fotogrammi scritti, totale
+    done = pyqtSignal(str)                # percorso del video
+    failed = pyqtSignal(str)
+    cancelled = pyqtSignal()
+
+    def __init__(self, files: list[Path], out: Path, fps: int, size: tuple[int, int],
+                 ffmpeg: str | None = None) -> None:
+        super().__init__()
+        self._files = [Path(f) for f in files]
+        self._out = Path(out)
+        self._fps = fps
+        self._size = size
+        self._ffmpeg = ffmpeg
+        self._cancel = threading.Event()
+        self._process: subprocess.Popen | None = None
+
+    def cancel(self) -> None:
+        """Thread-safe: si chiama dal thread della finestra."""
+        self._cancel.set()
+        processo = self._process
+        if processo is not None and processo.poll() is None:
+            processo.terminate()
+
+    @pyqtSlot()
+    def run(self) -> None:
+        ffmpeg = self._ffmpeg or find_ffmpeg()
+        if ffmpeg is None:
+            self.failed.emit("ffmpeg non è installato: il video non si può montare.")
+            return
+        parziale = self._out.with_name(self._out.name + ".part")
+        try:
+            with tempfile.TemporaryDirectory(prefix="olympus-timelapse-") as temporanea:
+                cartella = Path(temporanea)
+                totale = link_frames(self._files, cartella)
+                with open(cartella / "errori.txt", "w+b") as errori:
+                    self._process = subprocess.Popen(
+                        build_command(ffmpeg, cartella, self._fps, self._size, parziale),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errori,
+                        text=True)
+                    if self._cancel.is_set():
+                        self._process.terminate()
+                    for riga in self._process.stdout:
+                        scritti = parse_progress(riga)
+                        if scritti is not None:
+                            self.progress.emit(min(scritti, totale), totale)
+                    codice = self._process.wait()
+                    errori.seek(0)
+                    messaggio = errori.read().decode("utf-8", "replace").strip()
+        except Exception as exc:
+            parziale.unlink(missing_ok=True)
+            self.failed.emit(f"Il montaggio del video non è riuscito: {exc}")
+            return
+        if self._cancel.is_set():
+            parziale.unlink(missing_ok=True)
+            self.cancelled.emit()
+            return
+        if codice != 0:
+            parziale.unlink(missing_ok=True)
+            ultima = messaggio.splitlines()[-1] if messaggio else f"codice {codice}"
+            self.failed.emit(f"Il montaggio del video non è riuscito: {ultima}")
+            return
+        os.replace(parziale, self._out)
+        self.done.emit(str(self._out))

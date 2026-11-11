@@ -478,3 +478,11 @@ def test_grid_does_not_mark_requests_nobody_receives(qapp):
     grid.thumbnail_needed.connect(ricevute.append)
     grid.request_visible_thumbnails()        # ora qualcuno ascolta
     assert set(ricevute) == {"/DCIM/100OLYMP/A.JPG", "/DCIM/100OLYMP/B.JPG"}
+
+
+def test_model_reports_every_camera_path_whatever_the_filter(qapp):
+    modello = MediaListModel()
+    assert modello.camera_paths() == set()
+    modello.set_jobs([job("P1.JPG"), job("P1.ORF", MediaKind.RAW)])
+    modello.set_filter(MediaFilter(kinds={MediaKind.JPEG}, only_new=False))
+    assert modello.camera_paths() == {"/DCIM/100OLYMP/P1.JPG", "/DCIM/100OLYMP/P1.ORF"}

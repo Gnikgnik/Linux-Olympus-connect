@@ -554,3 +554,14 @@ def test_a_failing_stoptake_after_a_good_starttake_is_reported(requests_mock):
     }))
     with pytest.raises(CameraNotReachable):
         OlympusClient().take_picture()
+
+
+def test_list_media_can_stay_in_shooting_mode(requests_mock):
+    # Sul campo (2026-11-11) get_imglist risponde anche in modalità scatto: per
+    # l'istantanea di inizio sequenza non si deve passare in riproduzione.
+    requests_mock.get(f"{BASE_URL}/get_imglist.cgi",
+                      text="VER_100\r\n/DCIM/100OLYMP,P9240123.JPG,5000000,0,19594,45820\r\n")
+    requests_mock.get(f"{BASE_URL}/switch_cammode.cgi", content=b"")
+    files = OlympusClient().list_media("/DCIM/100OLYMP", switch_to_play=False)
+    assert [f.name for f in files] == ["P9240123.JPG"]
+    assert not [r for r in requests_mock.request_history if "switch_cammode" in r.url]

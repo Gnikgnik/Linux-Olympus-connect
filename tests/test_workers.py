@@ -876,3 +876,164 @@ def test_the_last_read_wins(qapp):
     worker.shoot()
     assert [s for s, _ in ev["exposing"]] == [pytest.approx(8.0)]
     assert client.read_timeout == pytest.approx(23.8)
+
+
+# --- sequenze: istantanea dei nomi, pausa del live, montaggio -------------------------
+
+import threading  # noqa: E402
+
+from olympus_connect.core.timelapse import find_ffmpeg  # noqa: E402
+from olympus_connect.gui.workers import RemoteWorker, TimelapseWorker  # noqa: E402
+
+
+class _SequenceClient:
+    def __init__(self, fail=()):
+        self.calls = []
+        self.fail = set(fail)
+
+    def _call(self, name, *args):
+        self.calls.append((name, *args))
+        if name in self.fail:
+            raise RuntimeError("guasto finto")
+
+    def list_media(self, directory="/DCIM", switch_to_play=True):
+        self._call("list_media", directory, switch_to_play)
+        return [media("P1.JPG"), media("P1.ORF")]
+
+    def stop_liveview(self):
+        self._call("stop_liveview")
+
+    def start_liveview(self, port):
+        self._call("start_liveview", port)
+
+
+def _sequence_worker(client):
+    worker = RemoteWorker(client)
+    ev = {"names": [], "resumed": [], "failed": []}
+    worker.names_read.connect(ev["names"].append)
+    worker.live_resumed.connect(ev["resumed"].append)
+    worker.failed.connect(ev["failed"].append)
+    return worker, ev
+
+
+def test_snapshot_reads_the_card_without_leaving_shooting_mode(qapp):
+    client = _SequenceClient()
+    worker, ev = _sequence_worker(client)
+    worker.snapshot_names()
+    assert client.calls == [("list_media", "/DCIM", False)]
+    assert ev["names"] == [{"/DCIM/100OLYMP/P1.JPG", "/DCIM/100OLYMP/P1.ORF"}]
+
+
+def test_a_failed_snapshot_reports_none_and_no_error(qapp):
+    worker, ev = _sequence_worker(_SequenceClient(fail=["list_media"]))
+    worker.snapshot_names()
+    assert ev["names"] == [None] and ev["failed"] == []
+
+
+def test_pause_and_resume_the_live(qapp):
+    client = _SequenceClient()
+    worker, ev = _sequence_worker(client)
+    worker.pause_live()
+    worker.resume_live(5555)
+    assert client.calls == [("stop_liveview",), ("start_liveview", 5555)]
+    assert ev["resumed"] == [True] and ev["failed"] == []
+
+
+def test_live_pause_and_resume_failures_stay_quiet(qapp):
+    worker, ev = _sequence_worker(_SequenceClient(fail=["stop_liveview", "start_liveview"]))
+    worker.pause_live()
+    worker.resume_live(5555)
+    assert ev["resumed"] == [False] and ev["failed"] == []
+
+
+def _foto(tmp_path, quante=3):
+    cartella = tmp_path / "Sequenza"
+    cartella.mkdir()
+    foto = []
+    for i in range(quante):
+        percorso = cartella / f"P{i}.JPG"
+        percorso.write_bytes(b"jpeg finto")
+        foto.append(percorso)
+    return cartella, foto
+
+
+def _finto_ffmpeg(tmp_path, corpo):
+    """Uno script al posto di ffmpeg: l'ultimo argomento è il file di uscita."""
+    script = tmp_path / "finto-ffmpeg"
+    script.write_text('#!/bin/sh\nfor a in "$@"; do out="$a"; done\n' + corpo)
+    script.chmod(0o755)
+    return str(script)
+
+
+def _timelapse(foto, uscita, ffmpeg):
+    worker = TimelapseWorker(foto, uscita, 25, (1920, 1080), ffmpeg=ffmpeg)
+    ev = {"progress": [], "done": [], "failed": [], "cancelled": 0}
+    worker.progress.connect(lambda n, t: ev["progress"].append((n, t)))
+    worker.done.connect(ev["done"].append)
+    worker.failed.connect(ev["failed"].append)
+    worker.cancelled.connect(lambda: ev.__setitem__("cancelled", ev["cancelled"] + 1))
+    return worker, ev
+
+
+def test_timelapse_reports_progress_and_renames_the_finished_video(qapp, tmp_path):
+    cartella, foto = _foto(tmp_path)
+    uscita = cartella / "timelapse.mp4"
+    ffmpeg = _finto_ffmpeg(tmp_path, 'echo frame=1\necho fps=25\necho frame=3\necho video > "$out"\n')
+    worker, ev = _timelapse(foto, uscita, ffmpeg)
+    worker.run()
+    assert ev["progress"] == [(1, 3), (3, 3)]
+    assert ev["done"] == [str(uscita)] and ev["failed"] == []
+    assert uscita.read_text() == "video\n"
+    assert not (cartella / "timelapse.mp4.part").exists()
+
+
+def test_timelapse_failure_removes_the_partial_file_and_keeps_the_photos(qapp, tmp_path):
+    cartella, foto = _foto(tmp_path)
+    uscita = cartella / "timelapse.mp4"
+    ffmpeg = _finto_ffmpeg(tmp_path, 'echo meta > "$out"\necho "codec rotto" >&2\nexit 1\n')
+    worker, ev = _timelapse(foto, uscita, ffmpeg)
+    worker.run()
+    assert ev["done"] == [] and len(ev["failed"]) == 1
+    assert "Il montaggio del video non è riuscito" in ev["failed"][0]
+    assert "codec rotto" in ev["failed"][0]
+    assert not uscita.exists() and not (cartella / "timelapse.mp4.part").exists()
+    assert all(p.exists() for p in foto)
+
+
+def test_timelapse_without_ffmpeg_fails_with_a_clear_message(qapp, tmp_path, monkeypatch):
+    cartella, foto = _foto(tmp_path)
+    monkeypatch.setattr("olympus_connect.gui.workers.find_ffmpeg", lambda: None)
+    worker, ev = _timelapse(foto, cartella / "timelapse.mp4", None)
+    worker.run()
+    assert ev["failed"] == ["ffmpeg non è installato: il video non si può montare."]
+
+
+def test_timelapse_can_be_cancelled_from_another_thread(qapp, tmp_path):
+    cartella, foto = _foto(tmp_path)
+    uscita = cartella / "timelapse.mp4"
+    ffmpeg = _finto_ffmpeg(tmp_path, 'echo meta > "$out"\necho frame=1\nexec sleep 30\n')
+    worker, ev = _timelapse(foto, uscita, ffmpeg)
+    worker.progress.connect(lambda n, t: threading.Thread(target=worker.cancel).start())
+    worker.run()                                 # torna quando il processo è stato terminato
+    assert ev["cancelled"] == 1 and ev["done"] == [] and ev["failed"] == []
+    assert not uscita.exists() and not (cartella / "timelapse.mp4.part").exists()
+
+
+def test_timelapse_with_the_real_ffmpeg(qapp, tmp_path):
+    if find_ffmpeg() is None:
+        pytest.skip("ffmpeg non installato")
+    from PyQt6.QtGui import QImage
+    cartella = tmp_path / "Sequenza"
+    cartella.mkdir()
+    foto = []
+    for i, colore in enumerate((0xFF203040, 0xFF806020, 0xFF20A060)):
+        immagine = QImage(640, 480, QImage.Format.Format_RGB32)
+        immagine.fill(colore)
+        percorso = cartella / f"P{i}.JPG"
+        assert immagine.save(str(percorso), "JPEG")
+        foto.append(percorso)
+    uscita = cartella / "timelapse.mp4"
+    worker, ev = _timelapse(foto, uscita, None)
+    worker.run()
+    assert ev["failed"] == [] and ev["done"] == [str(uscita)]
+    assert ev["progress"][-1] == (3, 3) and uscita.stat().st_size > 1000

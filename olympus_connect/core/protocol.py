@@ -172,9 +172,18 @@ class OlympusClient:
 
     # -- elenco e miniature -----------------------------------------------
 
-    def list_media(self, directory: str = "/DCIM") -> list[MediaFile]:
-        """Elenca ricorsivamente i file multimediali sulla scheda."""
-        self.ensure_play_mode()
+    def list_media(self, directory: str = "/DCIM",
+                   switch_to_play: bool = True) -> list[MediaFile]:
+        """Elenca ricorsivamente i file multimediali sulla scheda.
+
+        Di norma passa prima in riproduzione. Con switch_to_play=False lascia
+        la fotocamera com'è: get_imglist risponde anche in modalità scatto
+        (verificato sul campo il 2026-11-11), e serve per fotografare l'elenco
+        all'inizio di una sequenza senza spegnere il live. Letto subito dopo
+        uno scatto, l'elenco non contiene ancora quella foto.
+        """
+        if switch_to_play:
+            self.ensure_play_mode()
         found: list[MediaFile] = []
         pending = [directory]
         seen: set[str] = set()
