@@ -98,6 +98,44 @@ def test_a_shot_longer_than_the_interval_goes_back_to_back_without_catching_up()
     assert stato.total == 5                            # ceil(60 / 13)
 
 
+def test_a_tick_exactly_on_the_grid_never_fires_the_same_slot_twice():
+    # Dalla revisione: con t0 = 0,1 e giri ogni 0,2 s la divisione arrotondava
+    # per difetto e lo scatto appena fatto tornava «dovuto»: 302 scatti invece di 300.
+    stato = SequenceState(SequencePlan(2, 600))
+    stato.start(0.1)
+    partenze, fine_scatto, n = [], None, 0
+    while not stato.finished and n < 4000:
+        adesso = 0.1 + n * 0.2
+        if fine_scatto is not None and adesso >= fine_scatto:
+            stato.shot_done(True, adesso)
+            fine_scatto = None
+        if stato.tick(adesso, True):
+            partenze.append(adesso)
+            fine_scatto = adesso + 1.0
+        n += 1
+    assert stato.finished and len(partenze) == 300 == stato.total
+    distanze = [b - a for a, b in zip(partenze, partenze[1:])]
+    assert min(distanze) > 1.9 and max(distanze) < 2.1
+
+
+def test_stop_during_a_shot_that_then_fails_still_ends():
+    stato = SequenceState(SequencePlan(5, 600))
+    stato.start(0.0)
+    assert stato.tick(0.0, True)
+    stato.stop()
+    stato.shot_done(False, 1.0)
+    assert stato.finished and not stato.aborted and (stato.taken, stato.skipped) == (0, 1)
+
+
+def test_nothing_happens_before_start():
+    stato = SequenceState(SequencePlan(5, 600))
+    assert not stato.running and not stato.tick(0.0, True)
+    stato.shot_done(True, 1.0)
+    assert stato.index == 0 and not stato.finished
+    assert not stato.may_pause_live(0.0) and not stato.wake_due(0.0)
+    assert stato.remaining(0.0) == 0.0
+
+
 def test_no_shot_starts_after_the_duration_but_the_one_in_flight_ends():
     stato = SequenceState(SequencePlan(5, 10))
     stato.start(0.0)
@@ -193,6 +231,7 @@ def test_live_pause_and_wake_windows():
     corto.tick(0.0, True)
     corto.shot_done(True, 1.0)
     assert not corto.may_pause_live(1.5)                # intervalli brevi: live sempre acceso
+    assert not corto.wake_due(1.5) and not corto.wake_due(4.9)   # e nessuna sveglia da mandare
     stato.stop()
     assert not stato.may_pause_live(3.0) and not stato.wake_due(116.0)
 
@@ -227,9 +266,24 @@ def test_sequence_files_are_the_new_jpegs_in_card_order():
             _media("PB110002.JPG", MediaKind.JPEG), _media("PB110002.ORF", MediaKind.RAW),
             _media("PB110003.MOV", MediaKind.MOVIE), _media("PB110004.JPG", MediaKind.JPEG)]
     assert [m.name for m in sequence_files(prima, dopo)] == ["PB110002.JPG", "PB110004.JPG"]
+    assert [m.name for m in sequence_files(prima, reversed(dopo))] == ["PB110002.JPG", "PB110004.JPG"]
     assert sequence_files(prima, dopo[:2]) == []
     solo_raw = [_media("PB110009.ORF", MediaKind.RAW)]
     assert sequence_files(prima, solo_raw) == []
+
+
+def test_sequence_files_follow_the_shots_across_folders_and_midnight():
+    def in_cartella(cartella, nome):
+        return MediaFile(f"/DCIM/{cartella}/{nome}", 10, datetime(2026, 12, 31, 23, 59, 0),
+                         MediaKind.JPEG)
+    # l'elenco arriva dall'ultima cartella alla prima; a mezzanotte il nome cambia
+    # prefisso (PC31… → P101…) ma il contatore prosegue; a 9999 cambia la cartella
+    elenco = [in_cartella("101OLYMP", "P1010001.JPG"), in_cartella("101OLYMP", "P1010002.JPG"),
+              in_cartella("100OLYMP", "PC319997.JPG"), in_cartella("100OLYMP", "P1019999.JPG"),
+              in_cartella("100OLYMP", "PC319998.JPG")]
+    assert [m.camera_path.split("/", 2)[2] for m in sequence_files(set(), elenco)] == [
+        "100OLYMP/PC319997.JPG", "100OLYMP/PC319998.JPG", "100OLYMP/P1019999.JPG",
+        "101OLYMP/P1010001.JPG", "101OLYMP/P1010002.JPG"]
 
 
 def test_folder_name_avoids_existing_folders():

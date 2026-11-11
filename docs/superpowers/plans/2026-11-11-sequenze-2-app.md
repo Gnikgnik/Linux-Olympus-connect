@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- I test si lanciano con `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`. Prima di ogni commit la serie completa deve passare (668 all'inizio di questo piano); lanciala due volte prima del commit finale di ogni task, per scoprire test instabili.
+- I test si lanciano con `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`. Prima di ogni commit la serie completa deve passare (675 all'inizio di questo piano); lanciala due volte prima del commit finale di ogni task, per scoprire test instabili.
 - Nessuna nuova dipendenza. `exec_erase.cgi` non va mai invocato.
 - Nessun agente parla con la fotocamera vera né usa la rete: solo test con client finti o con il server finto di `tests/test_remote_e2e.py`. La prova sul campo (Task 9) la fa l'utente.
 - Testi dell'interfaccia in italiano, uguali a quelli scritti in questo piano. Nomi di variabili e commenti in italiano come nel resto del codice; nomi pubblici (classi, metodi, segnali) in inglese come nel resto del codice.
@@ -46,7 +46,7 @@
 - Già nell'albero (commit `214ef8f` e `4d174b9`): `olympus_connect/core/sequence.py`, `olympus_connect/core/timelapse.py`, `olympus_connect/core/power.py`, `plan_flat` in `olympus_connect/core/downloader.py`
 - Test già nell'albero: `tests/test_sequence.py`, `tests/test_timelapse.py`, `tests/test_power.py`, `tests/test_downloader.py`
 
-**Nota:** questi moduli sono stati scritti e provati mentre si stendeva il piano (44 test, serie completa a 668). Il task è una revisione indipendente: nessun codice nuovo, salvo le correzioni che la revisione chiede.
+**Nota:** questi moduli sono stati scritti e provati mentre si stendeva il piano (51 test, serie completa a 675), poi rivisti da un revisore indipendente e corretti (griglia degli scatti, nomi uguali da due cartelle, ordine di scatto, colori del video). Il task è una revisione indipendente: nessun codice nuovo, salvo le correzioni che la revisione chiede.
 
 **Interfaces:**
 - Consumes: `MediaFile`, `MediaKind` da `core/model.py`; `Job`, `JobState` da `core/downloader.py`.
@@ -90,7 +90,7 @@ class SequenceState:
     def wake_due(self, now: float) -> bool
 
 def progress_text(state: SequenceState, now: float) -> tuple[str, str]
-def sequence_files(before: Iterable[str], after: Iterable[MediaFile]) -> list[MediaFile]
+def sequence_files(before: Iterable[str], after: Iterable[MediaFile]) -> list[MediaFile]   # in ordine di scatto
 def folder_name(started: datetime, exists: Callable[[str], bool]) -> str
 
 # core/timelapse.py
@@ -112,13 +112,13 @@ class SleepInhibitor:
     def stop(self) -> None
 
 # core/downloader.py
-def plan_flat(files: Iterable[MediaFile], folder: Path) -> list[Job]   # dest = folder / media.name
+def plan_flat(files: Iterable[MediaFile], folder: Path) -> list[Job]   # dest = folder / media.name; stesso ordine; nomi uguali da due cartelle prendono il prefisso della cartella
 ```
 
 - [ ] **Step 1: Verifica**
 
 Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_sequence.py tests/test_timelapse.py tests/test_power.py tests/test_downloader.py`
-Expected: `66 passed` (con `ffmpeg` installato; senza, uno saltato).
+Expected: `73 passed` (con `ffmpeg` installato; senza, uno saltato).
 
 Run: `grep -n "PyQt6\|import requests" olympus_connect/core/sequence.py olympus_connect/core/timelapse.py olympus_connect/core/power.py`
 Expected: nessuna riga (i moduli di base non importano Qt né la rete).
@@ -750,7 +750,7 @@ Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_sequenc
 Expected: `16 passed`.
 
 Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `684 passed` (668 più 16).
+Expected: `691 passed` (675 più 16).
 
 - [ ] **Step 5: Commit**
 
@@ -1136,7 +1136,7 @@ Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_sequenc
 Expected: `29 passed` (13 più 16).
 
 Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `697 passed`.
+Expected: `704 passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -1563,7 +1563,7 @@ Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_workers
 Expected: tutti verdi; 11 test nuovi (1 nel protocollo, 9 nei worker, 1 nella griglia).
 
 Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `708 passed`.
+Expected: `715 passed`.
 
 Run: `pgrep -x sleep -a`
 Expected: nessun `sleep 30` rimasto dal test dell'annullamento.
@@ -2316,7 +2316,7 @@ Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_remote_
 Expected: tutti verdi; 19 test nuovi (4 nella vista, 15 nella finestra).
 
 Run due volte: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `727 passed` entrambe le volte.
+Expected: `734 passed` entrambe le volte.
 
 Run: `systemd-inhibit --list --no-pager | grep -c "Olympus Connect"`
 Expected: `0` (i test usano il blocco finto: nessun blocco vero deve restare).
@@ -2617,7 +2617,7 @@ Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_main_wi
 Expected: tutti verdi, 8 test nuovi.
 
 Run due volte: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `735 passed` entrambe le volte.
+Expected: `742 passed` entrambe le volte.
 
 - [ ] **Step 6: Commit**
 
@@ -2989,9 +2989,10 @@ Aggiungi i metodi dopo `_on_sequence_ended`:
         self._update_sequence_summary()
         radice = Path(self.dest_root())
         cartella = radice / folder_name(risultato.started_at, lambda n: (radice / n).exists())
-        self._sequence_job = SequenceJob(cartella, [cartella / m.name for m in foto],
+        lavori = plan_flat(foto, cartella)      # stesso ordine delle foto: quello di scatto
+        self._sequence_job = SequenceJob(cartella, [lavoro.dest for lavoro in lavori],
                                          scelta.video, scelta.resolution, scelta.fps)
-        self._start_download(plan_flat(foto, cartella), mark_model=False)
+        self._start_download(lavori, mark_model=False)
 ```
 
 - [ ] **Step 6: Dopo lo scarico, il video**
@@ -3089,7 +3090,7 @@ Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q tests/test_main_wi
 Expected: tutti verdi, 12 test nuovi.
 
 Run due volte: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `747 passed` entrambe le volte.
+Expected: `754 passed` entrambe le volte.
 
 - [ ] **Step 8: Commit**
 
@@ -3248,7 +3249,7 @@ In `DESIGN.md`, nella voce **Remote mode**, dopo la frase sulla sezione Settings
 - [ ] **Step 6: Verifica finale e commit**
 
 Run due volte: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q`
-Expected: `748 passed` entrambe le volte (747 più il test dall'inizio alla fine).
+Expected: `755 passed` entrambe le volte (754 più il test dall'inizio alla fine).
 
 Controllo dei seriali, senza stamparli:
 

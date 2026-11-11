@@ -53,6 +53,18 @@ def test_plan_flat_puts_every_file_in_one_folder_with_the_same_states(tmp_path):
     assert [j.state for j in jobs] == [JobState.NEW, JobState.PRESENT, JobState.INCOMPLETE]
 
 
+def test_plan_flat_keeps_apart_same_names_from_two_camera_folders(tmp_path):
+    # una sequenza lunga passa il contatore 9999 e continua in un'altra cartella
+    def in_cartella(cartella, nome):
+        return MediaFile(f"/DCIM/{cartella}/{nome}", 1000,
+                         datetime(2026, 11, 11, 12, 0, 0), MediaKind.JPEG)
+    file = [in_cartella("100OLYMP", "PB119999.JPG"), in_cartella("100OLYMP", "PB110001.JPG"),
+            in_cartella("101OLYMP", "PB110001.JPG")]
+    nomi = [j.dest.name for j in plan_flat(file, tmp_path)]
+    assert nomi == ["PB119999.JPG", "100OLYMP_PB110001.JPG", "101OLYMP_PB110001.JPG"]
+    assert len(set(nomi)) == 3
+
+
 def test_plan_puts_undated_file_in_senza_data(tmp_path):
     undated = MediaFile("/DCIM/100OLYMP/ODD.JPG", 5, None, MediaKind.JPEG)
     assert plan([undated], tmp_path)[0].dest == tmp_path / "senza-data/ODD.JPG"

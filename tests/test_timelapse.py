@@ -22,7 +22,9 @@ def test_command():
     assert comando[0] == "/usr/bin/ffmpeg" and comando[-1] == "/x/t.mp4.part"
     testo = " ".join(comando)
     assert "-framerate 30 -i /tmp/f/%06d.jpg" in testo
-    assert "scale=3840:2160:force_original_aspect_ratio=increase,crop=3840:2160" in testo
+    assert ("scale=3840:2160:force_original_aspect_ratio=increase:out_color_matrix=bt709"
+            ":out_range=tv,crop=3840:2160") in testo
+    assert "-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv" in testo
     assert "-c:v libx264 -crf 18 -preset medium -pix_fmt yuv420p" in testo
     assert "-progress pipe:1" in testo and "-f mp4" in testo and "-nostdin" in testo
 
@@ -69,3 +71,12 @@ def test_a_real_video_from_three_frames(tmp_path):
     assert esito.returncode == 0, esito.stderr
     assert video.stat().st_size > 1000
     assert [parse_progress(r) for r in esito.stdout.splitlines() if r.startswith("frame=")][-1] == 3
+    import shutil
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is not None:                 # il filtro sbagliato darebbe un altro formato
+        letto = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height,pix_fmt,color_range,color_space,nb_frames",
+             "-of", "csv=p=0", str(video)],
+            capture_output=True, text=True, timeout=60).stdout.strip()
+        assert letto == "1920,1080,yuv420p,tv,bt709,3", letto

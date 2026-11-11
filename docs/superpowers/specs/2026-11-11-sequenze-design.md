@@ -119,7 +119,7 @@ La finestra di fine sequenza non blocca il programma (`open()`): i worker contin
 
 ### Il video
 
-`ffmpeg`, H.264 (`libx264`, `-crf 18`, `-preset medium`, `-pix_fmt yuv420p`, `-movflags +faststart`), contenitore MP4. Le foto, nell'ordine della sequenza, entrano come collegamenti simbolici numerati (`000001.jpg`…) in una cartella temporanea, lette con `-framerate <fps> -i %06d.jpg`. Filtro: `scale=L:A:force_original_aspect_ratio=increase,crop=L:A` (ritaglio al centro in 16:9). L'uscita si scrive in `timelapse.mp4.part` (`-f mp4`) e si rinomina a montaggio riuscito. L'avanzamento si legge da `-progress pipe:1` (riga `frame=N`).
+`ffmpeg`, H.264 (`libx264`, `-crf 18`, `-preset medium`, `-pix_fmt yuv420p`, `-movflags +faststart`), contenitore MP4. Le foto, nell'ordine della sequenza, entrano come collegamenti simbolici numerati (`000001.jpg`…) in una cartella temporanea, lette con `-framerate <fps> -i %06d.jpg`. Filtro: `scale=L:A:force_original_aspect_ratio=increase:out_color_matrix=bt709:out_range=tv,crop=L:A` (ritaglio al centro in 16:9; i JPEG sono BT.601 a gamma piena, il video esce BT.709 a gamma ridotta e lo dichiara con `-colorspace`, `-color_primaries`, `-color_trc`, `-color_range`). L'uscita si scrive in `timelapse.mp4.part` (`-f mp4`) e si rinomina a montaggio riuscito. L'avanzamento si legge da `-progress pipe:1` (riga `frame=N`).
 
 ## Architettura
 
@@ -127,16 +127,16 @@ La finestra di fine sequenza non blocca il programma (`open()`): i worker contin
 
 **`core/sequence.py`** (nuovo):
 - `INTERVALS`, `DURATIONS` (secondi) e `format_span(seconds)` («5 s», «1 min», «1 h 30»).
-- `SequencePlan(interval, duration)` con `expected_shots(busy)`, `due_at(k)` e `summary(busy, fps)` (il testo del riepilogo).
+- `SequencePlan(interval, duration)` con `expected_shots(busy)`, `pauses_live()` e `summary(busy, fps)` (il testo del riepilogo).
 - `SequenceState`: l'automa della sequenza, guidato da un orologio passato da fuori. Metodi `start(now)`, `tick(now, ready) -> bool` (vero se deve partire uno scatto adesso), `shot_done(ok, now)`, `stop()`, e le letture `taken`, `skipped`, `index`, `next_in(now)`, `remaining(now)`, `finished`, `aborted`. Contiene tutte le regole di «I tempi» e di «Arresto ed errori» che non toccano la GUI.
-- `sequence_files(before: set[str], after: list[MediaFile]) -> list[MediaFile]`: i JPEG nuovi, nell'ordine della scheda.
+- `sequence_files(before, after) -> list[MediaFile]`: i JPEG nuovi, **in ordine di scatto**: per cartella della scheda e poi per contatore (le ultime quattro cifre del nome). L'ordine dell'elenco non basta (le cartelle arrivano dall'ultima alla prima) e nemmeno il nome (comincia con mese e giorno, e una sequenza può passare la mezzanotte).
 - `folder_name(started: datetime, existing: Callable[[str], bool]) -> str`.
 
 **`core/timelapse.py`** (nuovo): `find_ffmpeg()`, `RESOLUTIONS`, `FRAME_RATES`, `link_frames(files, folder)`, `build_command(ffmpeg, frames_dir, fps, size, out)`, `parse_progress(line) -> int | None`.
 
 **`core/power.py`** (nuovo): `SleepInhibitor` con `start(seconds) -> bool`, `active()` e `stop()`; un processo figlio `systemd-inhibit … sleep <durata + 600>` in un gruppo di processi suo, chiuso tutto insieme in `stop()`. La durata finita fa sì che, se l'app muore male, il blocco non resti per sempre.
 
-**`core/downloader.py`**: `plan_flat(files, folder) -> list[Job]`, come `plan` ma con destinazione `folder / media.name`.
+**`core/downloader.py`**: `plan_flat(files, folder) -> list[Job]`, come `plan` ma con destinazione `folder / media.name`. Una sequenza lunga passa il contatore 9999 e continua in un'altra cartella della scheda, dove i nomi ricominciano: due file con lo stesso nome prendono davanti il nome della loro cartella (`101OLYMP_PB110001.JPG`).
 
 **`core/protocol.py`**: nessun comando nuovo; `list_media(directory, switch_to_play=True)` guadagna il parametro `switch_to_play`: con `False` non passa in riproduzione, per l'istantanea in modalità scatto (verificato). `stop_liveview`/`start_liveview` esistono già.
 

@@ -50,7 +50,11 @@ class SleepInhibitor:
         try:
             processo.wait(2)
         except subprocess.TimeoutExpired:
-            processo.kill()
+            try:
+                os.killpg(processo.pid, signal.SIGKILL)     # tutto il gruppo, non solo il capo
+            except OSError:
+                pass
+            processo.wait()
 
     def __del__(self) -> None:
         try:

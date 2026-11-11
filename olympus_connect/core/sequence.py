@@ -108,6 +108,7 @@ class SequenceState:
         self.finished = False
         self.aborted = False
         self._t0: float | None = None
+        self._slot = 0              # lo scatto dovuto è il numero _slot della griglia
         self._next_due = 0.0
         self._free_since = 0.0
         self._blocked_since: float | None = None
@@ -120,6 +121,7 @@ class SequenceState:
 
     def start(self, now: float) -> None:
         self._t0 = now
+        self._slot = 0
         self._next_due = now
         self._free_since = now
 
@@ -152,8 +154,15 @@ class SequenceState:
         self._blocked_since = None
         self.in_flight = True
         self.index += 1
-        passi = math.floor((now - self._t0) / self.plan.interval) + 1
-        self._next_due = self._t0 + passi * self.plan.interval
+        # Il prossimo posto della griglia strettamente dopo adesso. Il contatore
+        # è intero e non torna mai indietro: con la sola divisione, un giro che
+        # cade esattamente su un posto può arrotondare per difetto e far
+        # ripartire lo scatto appena fatto.
+        posto = max(self._slot + 1, math.floor((now - self._t0) / self.plan.interval) + 1)
+        while self._t0 + posto * self.plan.interval <= now:
+            posto += 1
+        self._slot = posto
+        self._next_due = self._t0 + posto * self.plan.interval
         return True
 
     def shot_done(self, ok: bool, now: float) -> None:
@@ -190,8 +199,8 @@ class SequenceState:
 
     def wake_due(self, now: float) -> bool:
         """Il live in pausa va riacceso: fra poco tocca scattare."""
-        return (self.running and not self.in_flight and not self._no_more_shots(now)
-                and self._next_due - now <= LIVE_LEAD)
+        return (self.running and not self.in_flight and self.plan.pauses_live()
+                and not self._no_more_shots(now) and self._next_due - now <= LIVE_LEAD)
 
 
 def progress_text(state: SequenceState, now: float) -> tuple[str, str]:
@@ -215,11 +224,25 @@ def progress_text(state: SequenceState, now: float) -> tuple[str, str]:
     return prima, seconda
 
 
+def _shot_order(media: MediaFile) -> tuple[str, int, str]:
+    """Cartella e contatore: l'ordine in cui la fotocamera ha scattato.
+
+    L'elenco non lo garantisce (le cartelle arrivano dall'ultima alla prima)
+    e il nome nemmeno: comincia con mese e giorno, e una sequenza può passare
+    la mezzanotte. Il contatore sono le ultime quattro cifre prima del punto,
+    e riparte da capo solo in una cartella nuova.
+    """
+    cartella, _, nome = media.camera_path.rpartition("/")
+    cifre = nome.rpartition(".")[0][-4:]
+    return cartella, int(cifre) if cifre.isdigit() else 0, nome
+
+
 def sequence_files(before: Iterable[str], after: Iterable[MediaFile]) -> list[MediaFile]:
     """I JPEG della sequenza: quelli che nell'istantanea presa all'avvio
-    (percorsi sulla fotocamera) non c'erano, nell'ordine della scheda."""
+    (percorsi sulla fotocamera) non c'erano, nell'ordine di scatto."""
     visti = set(before)
-    return [m for m in after if m.kind is MediaKind.JPEG and m.camera_path not in visti]
+    nuovi = [m for m in after if m.kind is MediaKind.JPEG and m.camera_path not in visti]
+    return sorted(nuovi, key=_shot_order)
 
 
 def folder_name(started: datetime, exists: Callable[[str], bool]) -> str:

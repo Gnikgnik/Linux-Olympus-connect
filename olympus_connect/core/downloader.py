@@ -51,10 +51,23 @@ def plan(files: Iterable[MediaFile], dest_root: Path) -> list[Job]:
 
 def plan_flat(files: Iterable[MediaFile], folder: Path) -> list[Job]:
     """Come plan(), ma tutti i file in una sola cartella, con il nome della
-    fotocamera: è la cartella dedicata di una sequenza."""
+    fotocamera: è la cartella dedicata di una sequenza.
+
+    Una sequenza lunga passa il contatore 9999 e continua in un'altra
+    cartella della scheda, dove i nomi ricominciano: due file con lo stesso
+    nome prendono davanti il nome della loro cartella (101OLYMP_PB110001.JPG),
+    così nessuno dei due sovrascrive l'altro.
+    """
+    files = list(files)
+    volte: dict[str, int] = {}
+    for media in files:
+        volte[media.name] = volte.get(media.name, 0) + 1
     jobs: list[Job] = []
     for media in files:
-        dest = Path(folder) / media.name
+        nome = media.name
+        if volte[nome] > 1:
+            nome = f"{media.camera_path.rsplit('/', 2)[-2]}_{nome}"
+        dest = Path(folder) / nome
         if not dest.exists():
             state = JobState.NEW
         elif dest.stat().st_size == media.size:

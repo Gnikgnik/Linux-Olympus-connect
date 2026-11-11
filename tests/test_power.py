@@ -48,6 +48,35 @@ def test_start_and_stop_kill_the_whole_process_group(tmp_path):
     blocco.stop()                                               # due volte: innocuo
 
 
+def test_stop_after_the_process_has_already_ended(tmp_path):
+    script = tmp_path / "subito"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o755)
+    blocco = SleepInhibitor(str(script))
+    assert blocco.start(60)
+    blocco._process.wait(5)
+    assert not blocco.active()
+    blocco.stop()                                               # non solleva, niente da fermare
+
+
+def test_a_process_that_ignores_the_request_is_killed_with_its_group(tmp_path, monkeypatch):
+    script = tmp_path / "sordo"
+    script.write_text(f"#!/bin/sh\ntrap '' TERM\necho $$ > '{tmp_path / 'pid'}'\n"
+                      "while true; do sleep 1; done\n")
+    script.chmod(0o755)
+    blocco = SleepInhibitor(str(script))
+    assert blocco.start(60)
+    file_pid, fine = tmp_path / "pid", time.monotonic() + 5
+    while not (file_pid.exists() and file_pid.read_text().strip()) and time.monotonic() < fine:
+        time.sleep(0.02)
+    pid = int(file_pid.read_text())
+    vera = blocco._process.wait
+    monkeypatch.setattr(blocco._process, "wait",
+                        lambda timeout=None: vera(0.3 if timeout else None))
+    blocco.stop()
+    assert not _vivo(pid)
+
+
 def test_starting_again_replaces_the_previous_block(tmp_path):
     blocco = SleepInhibitor(_finto(tmp_path))
     assert blocco.start(60)
