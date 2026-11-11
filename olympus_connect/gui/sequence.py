@@ -7,19 +7,22 @@ core/sequence.py: qui c'è solo ciò che serve a mostrarle e a farle girare.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple, Sequence
+from typing import Callable, NamedTuple, Sequence
 
-from PyQt6.QtCore import QSize, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QGridLayout, QHBoxLayout, QLabel, QMenu, QPushButton,
     QVBoxLayout, QWidget,
 )
 
+from ..core.power import SleepInhibitor
 from ..core.sequence import (
-    DEFAULT_DURATION, DEFAULT_INTERVAL, DURATIONS, INTERVALS, SequencePlan, format_span,
-    nearest,
+    DEFAULT_DURATION, DEFAULT_INTERVAL, DURATIONS, INTERVALS, SequencePlan, SequenceResult,
+    SequenceState, format_span, nearest, progress_text,
 )
 from ..core.timelapse import (
     DEFAULT_FRAME_RATE, DEFAULT_RESOLUTION, FRAME_RATES, RESOLUTIONS,
@@ -337,3 +340,98 @@ class SequenceEndDialog(QDialog):
         video = scarica and self._video.isEnabled() and self._video.isChecked()
         return EndChoice(scarica, video, self._resolution.currentText(),
                          int(self._fps.currentData()))
+
+
+class SequenceController(QObject):
+    """Fa girare una sequenza: a ogni scadenza chiede lo stesso scatto del
+    pulsante «Scatta».
+
+    Non conosce la finestra: sa se il telecomando è pronto da una funzione
+    che la finestra gli passa, e la finestra gli dice com'è finito ogni
+    scatto con shot_done(). Chi riceve shoot_requested deve far partire lo
+    scatto oppure chiamare shot_done(False).
+    """
+
+    shoot_requested = pyqtSignal()
+    wake_requested = pyqtSignal()           # il live in pausa va riacceso: fra poco si scatta
+    progress = pyqtSignal(str, str)
+    ended = pyqtSignal(object)              # SequenceResult
+
+    TICK_MS = 200
+
+    def __init__(self, ready: Callable[[], bool],
+                 clock: Callable[[], float] = time.monotonic, inhibitor=None,
+                 now: Callable[[], datetime] = datetime.now, parent=None) -> None:
+        super().__init__(parent)
+        self._ready = ready
+        self._clock = clock
+        self._wall = now
+        self._inhibitor = inhibitor if inhibitor is not None else SleepInhibitor()
+        self._state: SequenceState | None = None
+        self._started_at: datetime | None = None
+        self._woken = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.TICK_MS)
+        self._timer.timeout.connect(self.tick)
+
+    def is_running(self) -> bool:
+        return self._state is not None
+
+    def start(self, plan: SequencePlan, busy: float | None = None) -> bool:
+        """Avvia la sequenza. Falso se non è riuscito a impedire la
+        sospensione del PC: la sequenza parte lo stesso."""
+        self._state = SequenceState(plan, busy)
+        self._started_at = self._wall()
+        # All'avvio il live è acceso: il primo scatto non va svegliato.
+        self._woken = True
+        self._state.start(self._clock())
+        bloccato = self._inhibitor.start(plan.duration)
+        self._timer.start()
+        self.tick()
+        return bloccato
+
+    def stop(self) -> None:
+        if self._state is not None:
+            self._state.stop()
+            self.tick()
+
+    def abort(self) -> SequenceResult | None:
+        """Ferma subito, senza segnale: per l'uscita dal telecomando e la chiusura."""
+        return self._close()
+
+    def shot_done(self, ok: bool) -> None:
+        if self._state is not None:
+            self._state.shot_done(ok, self._clock())
+            self._woken = False
+            self.tick()
+
+    def may_pause_live(self) -> bool:
+        return self._state is not None and self._state.may_pause_live(self._clock())
+
+    def tick(self) -> None:
+        stato = self._state
+        if stato is None:
+            return
+        adesso = self._clock()
+        if not stato.finished:
+            if not self._woken and stato.wake_due(adesso):
+                self._woken = True
+                self.wake_requested.emit()
+                if self._state is not stato:
+                    return                  # fermata da chi ha ricevuto la sveglia
+            if stato.tick(adesso, self._ready()):
+                self.shoot_requested.emit()
+        if self._state is not stato:
+            return                          # fermata da chi ha ricevuto un segnale
+        if stato.finished:
+            self.ended.emit(self._close())
+        else:
+            self.progress.emit(*progress_text(stato, adesso))
+
+    def _close(self) -> SequenceResult | None:
+        stato, self._state = self._state, None
+        self._timer.stop()
+        if stato is None:
+            return None
+        self._inhibitor.stop()
+        return SequenceResult(stato.taken, stato.skipped, stato.aborted, self._started_at)
