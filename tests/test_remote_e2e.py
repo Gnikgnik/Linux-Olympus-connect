@@ -201,7 +201,7 @@ def test_remote_shows_the_live_shoots_and_returns_to_the_library(qapp, camera, t
 
         finestra._view_grid.click()
         assert _attendi(qapp, lambda: not finestra._remote_active), "uscita non completata"
-        assert _attendi(qapp, lambda: finestra._model.rowCount() == 1161), "elenco non rifatto"
+        assert _attendi(qapp, lambda: finestra._model.rowCount() == 1163), "elenco non rifatto con le due foto nuove"
         modi = [qs.get("mode") for nome, qs in camera["richieste"] if nome == "switch_cammode.cgi"]
         assert "rec" in modi and modi[-1] == "play"
 
