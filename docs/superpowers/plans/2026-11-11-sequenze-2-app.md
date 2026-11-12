@@ -3293,6 +3293,13 @@ Le sei prove della specifica («Prova finale con la fotocamera»), in ordine; fr
 5. **Arresti:** una sequenza fermata a metà con **Ferma sequenza**; una lasciata a metà tornando alle Miniature (deve chiedere conferma); in entrambi i casi compare la finestra di fine sequenza.
 6. **Scatto a mano prima di Avvia:** uno scatto con **Scatta**, subito dopo **Avvia sequenza** (intervallo 2 s, 5 min, fermata dopo qualche scatto): nella finestra il numero di foto è quello della sequenza, senza la foto a mano.
 
+Da guardare in particolare (dalla revisione finale):
+- prova 2 e 3: dopo **ogni** scatto la fotocamera è ancora in M (pannello; poi l'EXIF dei JPEG scaricati, nel pannello Dettagli della griglia);
+- prova 2: quante volte il rientro nel live dopo una posa non riesce (barra di stato, o «Riprova» a schermo): ora c'è un secondo tentativo automatico;
+- prova 4: se dopo 15 minuti a live spento risponde ancora `startliveview`, o se scatta lo spegnimento automatico della fotocamera (che non si comanda dal PC);
+- una chiusura del programma durante una posa lunga: deve chiedere conferma; poi guardare la fotocamera (resta in modalità scatto? la sessione dopo si collega normalmente?);
+- l'uscita dal telecomando durante una posa lunga: l'attesa (fino a circa 2 minuti), poi nella finestra finale c'è anche l'ultima foto.
+
 - [ ] **Step 2: Leggi il registro e annota l'esito**
 
 Run: `grep -n -i "error\|errore\|traceback\|1004" diag-downloads/prova_app_sequenze.txt | head -40`
