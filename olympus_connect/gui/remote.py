@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from . import icons, theme
 from .panels import SectionLabel
 from .props import PropsSection
+from .sequence import SequenceSection
 
 AF_BOX = 56          # lato del riquadro di messa a fuoco a schermo, in pixel
 
@@ -88,6 +89,7 @@ class RemoteView(QWidget):
         self._review_timer.setSingleShot(True)
         self._review_timer.setInterval(self.REVIEW_MS)
         self._review_timer.timeout.connect(self._end_review)
+        self._review_restore: int | None = None     # durata normale, da rimettere
 
         self._fade = QPropertyAnimation(self, b"reviewOpacity", self)
         self._fade.setDuration(theme.DURATION)
@@ -142,7 +144,9 @@ class RemoteView(QWidget):
         self._af_result = result
         self.update()
 
-    def show_review(self, data: bytes) -> bool:
+    def show_review(self, data: bytes, duration_ms: int | None = None) -> bool:
+        """Mostra lo scatto sopra il live. `duration_ms` accorcia l'anteprima
+        per questa volta (le sequenze veloci): alla fine torna la durata normale."""
         pixmap = QPixmap()
         if not data or not pixmap.loadFromData(data):
             return False
@@ -152,14 +156,25 @@ class RemoteView(QWidget):
         self._fade.setStartValue(0.35)
         self._fade.setEndValue(1.0)
         self._fade.start()
-        self._review_timer.start()
+        if duration_ms is None:
+            self._review_timer.start()
+        else:
+            if self._review_restore is None:
+                self._review_restore = self._review_timer.interval()
+            self._review_timer.start(duration_ms)       # start(ms) cambia anche l'intervallo
         self.update()
         return True
 
     def is_reviewing(self) -> bool:
         return self._review is not None
 
+    def _restore_review_length(self) -> None:
+        if self._review_restore is not None:
+            self._review_timer.setInterval(self._review_restore)
+            self._review_restore = None
+
     def _end_review(self) -> None:
+        self._restore_review_length()
         self._review = None
         if self._message and self._retry_wanted:
             self._retry.show()
@@ -181,6 +196,7 @@ class RemoteView(QWidget):
         self._frame = None
         self._review = None
         self._review_timer.stop()
+        self._restore_review_length()
         self._message = ""
         self._retry.hide()
         self._af = None
@@ -302,6 +318,10 @@ class RemotePanel(QWidget):
         colonna.addWidget(self.props)
         self._take_mode_text = "—"
 
+        colonna.addSpacing(8)
+        self.sequence = SequenceSection()
+        colonna.addWidget(self.sequence)
+
         suggerimento = QLabel("Clic sull'immagine per mettere a fuoco.")
         suggerimento.setObjectName("faint")
         suggerimento.setWordWrap(True)
@@ -310,6 +330,7 @@ class RemotePanel(QWidget):
 
         self._recording = False
         self._busy = False
+        self._sequence_running = False
         self._clock = QElapsedTimer()
         self._ticker = QTimer(self)
         self._ticker.setInterval(250)
@@ -338,6 +359,12 @@ class RemotePanel(QWidget):
         self._busy = busy
         self._refresh()
 
+    def set_sequence_running(self, running: bool) -> None:
+        """Durante una sequenza gli altri comandi sono spenti: resta solo Ferma."""
+        self._sequence_running = running
+        self.sequence.set_running(running)
+        self._refresh()
+
     def elapsed_text(self) -> str:
         if not self._recording:
             return "00:00"
@@ -356,6 +383,8 @@ class RemotePanel(QWidget):
             self._movie.setIcon(icons.icon("record", theme.ERROR, theme.LINE_STRONG, 18))
         self._elapsed_label.setVisible(self._recording)
         self._elapsed_label.setText(self.elapsed_text())
-        self._shoot.setEnabled(not self._busy and not self._recording)
-        self._movie.setEnabled(not self._busy)
-        self.props.set_enabled(not self._busy and not self._recording)
+        libero = not self._busy and not self._recording and not self._sequence_running
+        self._shoot.setEnabled(libero)
+        self._movie.setEnabled(not self._busy and not self._sequence_running)
+        self.props.set_enabled(libero)
+        self.sequence.set_enabled(not self._busy and not self._recording)

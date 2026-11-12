@@ -196,3 +196,53 @@ def test_the_review_stays_on_top_of_a_message_and_its_retry(qapp):
     vista._end_review()
     assert vista._retry.isVisible() and finita == [True]
     vista.hide()
+
+
+def test_a_review_can_be_shorter_and_the_normal_length_comes_back(qapp):
+    vista = RemoteView()
+    vista._review_timer.setInterval(400)             # la durata «normale» di questo test
+    assert vista.show_review(_jpeg(), 100)
+    assert vista._review_timer.interval() == 100
+    fine = time.monotonic() + 1.0
+    while time.monotonic() < fine and vista.is_reviewing():
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert not vista.is_reviewing()
+    assert vista._review_timer.interval() == 400     # rimessa alla fine dell'anteprima
+    assert vista.show_review(_jpeg())
+    assert vista._review_timer.interval() == 400
+    vista.clear()
+
+
+def test_clear_during_a_short_review_restores_the_normal_length(qapp):
+    vista = RemoteView()
+    vista._review_timer.setInterval(400)
+    vista.show_review(_jpeg(), 100)
+    vista.show_review(_jpeg(), 150)                  # una seconda, prima che finisca la prima
+    vista.clear()
+    assert vista._review_timer.interval() == 400
+
+
+def test_panel_has_the_sequence_section_and_locks_the_rest_while_it_runs(qapp):
+    pannello = RemotePanel()
+    assert pannello.sequence._button.isEnabled()
+    pannello.set_sequence_running(True)
+    assert pannello.sequence.is_running()
+    assert not pannello._shoot.isEnabled() and not pannello._movie.isEnabled()
+    assert pannello.sequence._button.isEnabled()             # Ferma
+    pannello.set_busy(True)                                  # durante ogni scatto
+    assert pannello.sequence._button.isEnabled()
+    pannello.set_busy(False)
+    pannello.set_sequence_running(False)
+    assert pannello._shoot.isEnabled() and pannello._movie.isEnabled()
+
+
+def test_panel_cannot_start_a_sequence_while_busy_or_recording(qapp):
+    pannello = RemotePanel()
+    pannello.set_busy(True)
+    assert not pannello.sequence._button.isEnabled()
+    pannello.set_busy(False)
+    pannello.set_recording(True)
+    assert not pannello.sequence._button.isEnabled()
+    pannello.set_recording(False)
+    assert pannello.sequence._button.isEnabled()

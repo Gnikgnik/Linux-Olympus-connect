@@ -25,18 +25,25 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from ..core.camprops import shot_busy_seconds
 from ..core.downloader import JobState
 from ..core.errors import NetworkUnavailable, OlympusError
 from ..core.model import MediaKind
 from ..core.network import CameraNetwork
+from ..core.power import SleepInhibitor
 from ..core.protocol import LIVE_QUALITY, OlympusClient
+from ..core.sequence import (
+    DEFAULT_DURATION, DEFAULT_INTERVAL, SNAPSHOT_SETTLE, SequencePlan, SequenceResult,
+)
 from ..core.stats import format_duration, format_rate, format_size
+from ..core.timelapse import DEFAULT_FRAME_RATE, FRAME_RATES
 from . import icons, theme
 from .grid import MediaFilter, MediaGrid, MediaListModel, MediaTable
 from .panels import CollapsiblePanel, SectionLabel, Separator
 from .liveview import LiveViewWorker
 from .preview import PreviewView
 from .remote import RemotePanel, RemoteView
+from .sequence import SequenceController
 from .shot import ShotSection, label_column_width
 from .workers import (
     DownloadWorker, ListWorker, PreviewWorker, RemoteWorker, ThumbWorker,
@@ -83,11 +90,17 @@ class MainWindow(QMainWindow):
     remote_leave = pyqtSignal()
     remote_read_props = pyqtSignal()
     remote_set_prop = pyqtSignal(str, str)
+    remote_snapshot_names = pyqtSignal()
+
+    # Letto subito dopo uno scatto, l'elenco della scheda non contiene ancora
+    # quella foto (prova sul campo del 2026-11-11): l'istantanea aspetta.
+    SNAPSHOT_SETTLE = SNAPSHOT_SETTLE
 
     def __init__(self, client_factory=OlympusClient,
                  network_factory=CameraNetwork,
                  settings: QSettings | None = None,
-                 live_factory=LiveViewWorker) -> None:
+                 live_factory=LiveViewWorker,
+                 inhibitor_factory=SleepInhibitor) -> None:
         super().__init__()
         self.setWindowTitle("Olympus Connect")
         self.resize(1180, 720)
@@ -131,6 +144,18 @@ class MainWindow(QMainWindow):
         self._exposure_timer.setInterval(1000)
         self._exposure_timer.timeout.connect(self._on_exposure_tick)
 
+        # Sequenze di scatti a intervalli.
+        self._remote_props: dict = {}              # l'ultimo elenco di impostazioni letto
+        self._last_shot_end = 0.0                  # tempo monotonic della fine dell'ultimo scatto
+        self._sequence_plan: SequencePlan | None = None
+        self._sequence_preparing = False           # fra Avvia e l'istantanea dei nomi
+        self._sequence_before: set[str] | None = None
+        self._sequence_result: SequenceResult | None = None
+        self._sequence = SequenceController(self._sequence_ready,
+                                            inhibitor=inhibitor_factory(), parent=self)
+        self._sequence.shoot_requested.connect(self._sequence_shoot)
+        self._sequence.ended.connect(self._on_sequence_ended)
+
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
         self._table = MediaTable(self._model)
@@ -166,10 +191,18 @@ class MainWindow(QMainWindow):
 
         self._remote_view.focus_requested.connect(self.on_remote_focus_requested)
         self._remote_view.retry_requested.connect(self.on_live_retry)
-        self._remote_view.review_ended.connect(self._restart_live_after_shot)
+        self._remote_view.review_ended.connect(self._after_shot_review)
         self._remote_panel.shoot_requested.connect(self.on_remote_shoot)
         self._remote_panel.movie_toggle_requested.connect(self.on_remote_movie_toggle)
         self._remote_panel.props.prop_changed.connect(self.on_remote_prop_changed)
+        sezione = self._remote_panel.sequence
+        sezione.set_values(int(self._settings.value("sequence/interval", DEFAULT_INTERVAL)),
+                           int(self._settings.value("sequence/duration", DEFAULT_DURATION)))
+        sezione.start_requested.connect(self.on_sequence_start)
+        sezione.stop_requested.connect(self.on_sequence_stop)
+        sezione.changed.connect(self._on_sequence_changed)
+        self._sequence.progress.connect(sezione.set_progress)
+        self._update_sequence_summary()
 
         self._shortcut_shoot = QShortcut(QKeySequence("Space"), self)
         self._shortcut_shoot.activated.connect(self.on_remote_shoot)
@@ -1020,6 +1053,10 @@ class MainWindow(QMainWindow):
         self._live_restart_pending = False
         self._mode_to_restore = None
         self._live_down = None
+        self._remote_props = {}
+        self._sequence_preparing = False
+        self._sequence_before = None
+        self._sequence_result = None       # una sequenza mai scaricata si dimentica qui
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
         # le loro richieste fallirebbero.
@@ -1051,6 +1088,7 @@ class MainWindow(QMainWindow):
         remote.props_read.connect(self.on_remote_props)
         remote.props_failed.connect(self.on_remote_props_failed)
         remote.exposing.connect(self.on_remote_exposing)
+        remote.names_read.connect(self.on_remote_names)
         coda = Qt.ConnectionType.QueuedConnection
         self.remote_enter.connect(remote.enter, coda)
         self.remote_focus.connect(remote.focus, coda)
@@ -1060,6 +1098,7 @@ class MainWindow(QMainWindow):
         self.remote_leave.connect(remote.leave, coda)
         self.remote_read_props.connect(remote.read_props, coda)
         self.remote_set_prop.connect(remote.set_prop, coda)
+        self.remote_snapshot_names.connect(remote.snapshot_names, coda)
 
         live = self._live_factory()
         live.listening.connect(self.on_live_listening)
@@ -1214,7 +1253,8 @@ class MainWindow(QMainWindow):
 
     def on_remote_focus_requested(self, x: int, y: int) -> None:
         if (not self._remote_active or self._remote_leaving or self._closing
-                or self._remote_panel.is_recording() or self._shot_in_flight):
+                or self._remote_panel.is_recording() or self._shot_in_flight
+                or self._sequence.is_running() or self._sequence_preparing):
             return
         logging.getLogger("olympus_connect.remote").debug(
             "clic sul live: punto=(%d, %d) fotogramma=%r", x, y, self._remote_view.frame_size())
@@ -1236,11 +1276,16 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bytes)
     def on_remote_shot(self, review: bytes) -> None:
+        self._last_shot_end = time.monotonic()
         self._end_shot(riuscito=True)
         self._remote_panel.set_busy(False)
-        if not self._remote_view.show_review(review):
-            self._restart_live_after_shot()     # niente anteprima da aspettare
         self.statusBar().showMessage("Scatto eseguito.", 4000)
+        durata = self._sequence_review_ms()
+        self._sequence.shot_done(True)      # può chiudere la sequenza e uscire dal telecomando
+        if self._remote_leaving or not self._remote_active:
+            return
+        if not self._remote_view.show_review(review, durata):
+            self._after_shot_review()       # niente anteprima da aspettare
 
     def on_remote_movie_toggle(self) -> None:
         if (not self._remote_active or self._remote_leaving
@@ -1268,6 +1313,9 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def on_remote_failed(self, message: str) -> None:
+        era_scatto = self._shot_in_flight
+        if era_scatto:
+            self._last_shot_end = time.monotonic()
         self._end_shot()
         # Senza `entered` il live non c'è: i comandi restano spenti.
         self._remote_panel.set_busy(not self._remote_entered or self._remote_leaving)
@@ -1276,6 +1324,8 @@ class MainWindow(QMainWindow):
             self._remote_view.set_af_result(False)
         if not self._remote_entered or not self._remote_view.has_frame():
             self._remote_view.show_message(message, retry=True)
+        if era_scatto:
+            self._sequence.shot_done(False)
 
     @pyqtSlot(object)
     def on_remote_props(self, props: object) -> None:
@@ -1286,6 +1336,8 @@ class MainWindow(QMainWindow):
             self.on_remote_props_failed("Elenco delle impostazioni illeggibile")
             return
         self._remote_panel.props.set_props(props)
+        self._remote_props = props
+        self._update_sequence_summary()
         voluta, self._mode_to_restore = self._mode_to_restore, None
         modo = props.get("takemode")
         if (voluta and modo is not None and modo.value != voluta and voluta in modo.values
@@ -1310,9 +1362,133 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Impostazione inviata alla fotocamera…", 2000)
         self.remote_set_prop.emit(name, value)
 
+    # -- sequenze -------------------------------------------------------------
+
+    def _confirm(self, title: str, text: str) -> bool:
+        risposta = QMessageBox.question(
+            self, title, text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return risposta == QMessageBox.StandardButton.Yes
+
+    def _sequence_fps(self) -> int:
+        valore = int(self._settings.value("sequence/fps", DEFAULT_FRAME_RATE))
+        return valore if valore in FRAME_RATES else DEFAULT_FRAME_RATE
+
+    def _update_sequence_summary(self) -> None:
+        sezione = self._remote_panel.sequence
+        sezione.set_summary(sezione.plan().summary(shot_busy_seconds(self._remote_props),
+                                                   self._sequence_fps()))
+
+    def _on_sequence_changed(self) -> None:
+        sezione = self._remote_panel.sequence
+        self._settings.setValue("sequence/interval", sezione.interval())
+        self._settings.setValue("sequence/duration", sezione.duration())
+        self._update_sequence_summary()
+
+    def _sequence_ready(self) -> bool:
+        """Il telecomando può scattare adesso: lo legge il regista a ogni giro."""
+        return (self._remote_active and self._remote_entered and not self._remote_leaving
+                and not self._closing and not self._shot_in_flight
+                and not self._remote_panel.is_recording()
+                and self._live_down is None and not self._live_restart_pending)
+
+    def on_sequence_start(self, interval: int, duration: int) -> None:
+        if self._sequence.is_running() or self._sequence_preparing:
+            return
+        if not self._sequence_ready():
+            # p. es. il live che riparte dopo uno scatto: il pulsante è acceso ma
+            # il telecomando non può ancora scattare; un clic muto confonde.
+            self.statusBar().showMessage("Il telecomando non è pronto: riprova fra poco.", 4000)
+            return
+        self._sequence_preparing = True
+        self._sequence_plan = SequencePlan(interval, duration)
+        self._remote_panel.set_sequence_running(True)
+        self._remote_panel.sequence.set_progress("Preparo la sequenza…", "")
+        self.statusBar().showMessage("Sequenza: leggo la scheda…")
+        attesa = max(0.0, self.SNAPSHOT_SETTLE - (time.monotonic() - self._last_shot_end))
+        QTimer.singleShot(int(attesa * 1000), self._sequence_snapshot)
+
+    def _sequence_snapshot(self) -> None:
+        if (not self._sequence_preparing or not self._remote_active
+                or self._remote_leaving or self._closing):
+            return
+        self.remote_snapshot_names.emit()
+
+    @pyqtSlot(object)
+    def on_remote_names(self, names: object) -> None:
+        """L'istantanea dei nomi è arrivata (None: non riuscita): parte la sequenza."""
+        if not self._sequence_preparing:
+            return
+        self._sequence_preparing = False
+        if not self._sequence_ready() or self._sequence_plan is None:
+            self._remote_panel.set_sequence_running(False)
+            self.statusBar().showMessage("Sequenza non avviata: il telecomando non è pronto.")
+            return
+        self._sequence_before = names
+        bloccato = self._sequence.start(self._sequence_plan,
+                                        shot_busy_seconds(self._remote_props))
+        self.statusBar().showMessage(
+            "Sequenza in corso." if bloccato else
+            "Sequenza in corso. Attenzione: non riesco a impedire la sospensione del PC.")
+
+    def on_sequence_stop(self) -> None:
+        if self._sequence_preparing:
+            self._sequence_preparing = False
+            self._remote_panel.set_sequence_running(False)
+            self.statusBar().showMessage("Sequenza annullata.", 4000)
+            return
+        self._sequence.stop()
+
+    def _sequence_shoot(self) -> None:
+        """Lo scatto chiesto dal regista: la stessa strada del pulsante Scatta."""
+        if not self._sequence_ready():
+            self._sequence.shot_done(False)
+            return
+        self._remote_panel.set_busy(True)
+        self._shot_in_flight = True
+        self.statusBar().showMessage("Sequenza: scatto…")
+        self.remote_shoot.emit()
+
+    def _sequence_review_ms(self) -> int | None:
+        """Durante una sequenza l'anteprima dura al più metà dell'intervallo."""
+        if not self._sequence.is_running() or self._sequence_plan is None:
+            return None
+        return int(min(2.0, self._sequence_plan.interval / 2) * 1000)
+
+    @pyqtSlot(object)
+    def _on_sequence_ended(self, result: object) -> None:
+        """Finita, fermata o interrotta: si esce dal telecomando; l'elenco che
+        segue l'uscita dirà quali foto sono della sequenza."""
+        self._remote_panel.set_sequence_running(False)
+        if result is None:
+            return
+        self._sequence_result = result
+        self.statusBar().showMessage(
+            "Sequenza interrotta: la fotocamera non risponde." if result.aborted
+            else "Sequenza finita.")
+        if self._remote_active and not self._remote_leaving and not self._closing:
+            self.exit_remote(self._remote_exit_view)
+
+    def _after_shot_review(self) -> None:
+        """Fine dell'anteprima di uno scatto (o subito, se l'anteprima non c'è)."""
+        self._restart_live_after_shot()
+
     def exit_remote(self, view: str) -> None:
         if not self._remote_active or self._remote_leaving:
             return
+        if self._sequence.is_running() or self._sequence_preparing:
+            if not self._confirm("Sequenza in corso",
+                                 "Uscendo dal telecomando la sequenza si fermerà. Uscire?"):
+                self._view_grid.setChecked(False)
+                self._view_table.setChecked(False)
+                self._view_remote.setChecked(True)
+                return
+            self._sequence_preparing = False
+            risultato = self._sequence.abort()
+            self._remote_panel.set_sequence_running(False)
+            if risultato is not None:
+                self._sequence_result = risultato
         self._remote_leaving = True
         self._remote_exit_view = view
         self._remote_panel.set_busy(True)
@@ -1332,6 +1508,11 @@ class MainWindow(QMainWindow):
         self._shot_in_flight = False
         self._live_down = None
         self._mode_to_restore = None
+        self._sequence_preparing = False
+        residuo = self._sequence.abort()        # di norma è già ferma
+        if residuo is not None and self._sequence_result is None:
+            self._sequence_result = residuo
+        self._remote_panel.set_sequence_running(False)
         for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
             scorciatoia.setEnabled(False)
         self._remote_panel.set_recording(False)
@@ -1364,7 +1545,8 @@ class MainWindow(QMainWindow):
         workers = [self._remote_worker, self._live_worker]
         for segnale in (self.remote_enter, self.remote_focus, self.remote_shoot,
                         self.remote_movie_start, self.remote_movie_stop, self.remote_leave,
-                        self.remote_read_props, self.remote_set_prop):
+                        self.remote_read_props, self.remote_set_prop,
+                        self.remote_snapshot_names):
             try:
                 segnale.disconnect()
             except TypeError:
@@ -1399,6 +1581,14 @@ class MainWindow(QMainWindow):
         Chiudere durante un trasferimento e' il caso normale, non un caso
         limite: la fotocamera e' lenta e l'utente se ne va.
         """
+        if self._sequence.is_running() or self._sequence_preparing:
+            if not self._confirm("Sequenza in corso",
+                                 "Chiudendo il programma la sequenza si fermerà. Chiudere?"):
+                event.ignore()
+                return
+            self._sequence_preparing = False
+            self._sequence.abort()
+        self._sequence_result = None
         self._closing = True
         self._stop_exposure()
         self._close_deadline = time.monotonic() + 3.0      # una scadenza per tutto

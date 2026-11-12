@@ -1387,3 +1387,259 @@ def test_entering_the_remote_follows_the_dial(props_win, qapp):
     assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode") is not None)
     _attendi(qapp, lambda: False, 0.3)
     assert not [c for c in _RecordingClient.chiamate if c[:2] == ("set_prop", "takemode")]
+
+
+# --- sequenze ------------------------------------------------------------------------
+
+import time as _time  # noqa: E402
+
+
+def _media_seq(nome, kind):
+    return MediaFile(f"/DCIM/100OLYMP/{nome}", 100, datetime(2026, 11, 11, 12, 0, 0), kind)
+
+
+class _FintoBlocco:
+    """Al posto di SleepInhibitor: i test non devono bloccare la sospensione del PC."""
+    istanze: list = []
+
+    def __init__(self):
+        self.eventi = []
+        _FintoBlocco.istanze.append(self)
+
+    def start(self, seconds):
+        self.eventi.append(("start", seconds))
+        return True
+
+    def stop(self):
+        self.eventi.append(("stop",))
+
+
+class _SequenceStubClient(_PropsStubClient):
+    """La scheda finta guadagna un JPG e un ORF a ogni scatto riuscito."""
+    file: list = []
+    guasti = 0                   # i primi N scatti falliscono
+    istantanea_rotta = False     # l'elenco in modalità scatto fallisce
+    elenco_rotto = 0             # i primi N elenchi in riproduzione falliscono
+
+    def list_media(self, directory="/DCIM", switch_to_play=True):
+        _RecordingClient.chiamate.append(("list_media", switch_to_play))
+        if not switch_to_play and _SequenceStubClient.istantanea_rotta:
+            raise RuntimeError("elenco in modalità scatto non riuscito")
+        if switch_to_play and _SequenceStubClient.elenco_rotto > 0:
+            _SequenceStubClient.elenco_rotto -= 1
+            raise RuntimeError("elenco non riuscito")
+        return list(_SequenceStubClient.file)
+
+    def take_picture(self, read_timeout=None):
+        _RecordingClient.chiamate.append(("take_picture",))
+        if _SequenceStubClient.guasti > 0:
+            _SequenceStubClient.guasti -= 1
+            raise RuntimeError("scatto non riuscito")
+        n = len(_SequenceStubClient.file) // 2 + 1
+        _SequenceStubClient.file = _SequenceStubClient.file + [
+            _media_seq(f"P{n:07d}.JPG", MediaKind.JPEG), _media_seq(f"P{n:07d}.ORF", MediaKind.RAW)]
+
+
+def _scatti():
+    return _RecordingClient.chiamate.count(("take_picture",))
+
+
+@pytest.fixture
+def seq_win(qapp, settings, tmp_path, monkeypatch):
+    _RecordingClient.chiamate = []
+    _FakeLive.istanze = []
+    _FintoBlocco.istanze = []
+    _PropsStubClient.valori = {}
+    _SequenceStubClient.file = [_media_seq("P0000001.JPG", MediaKind.JPEG),
+                                _media_seq("P0000001.ORF", MediaKind.RAW)]
+    _SequenceStubClient.guasti = 0
+    _SequenceStubClient.istantanea_rotta = False
+    _SequenceStubClient.elenco_rotto = 0
+    _RemoteStubClient.revisione = _jpeg_valido()
+    settings.setValue("dest_root", str(tmp_path / "dest"))
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 0.0)
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
+    win = MainWindow(client_factory=_SequenceStubClient,
+                     network_factory=lambda ssid: FakeNetwork(all_green()),
+                     settings=settings, live_factory=_FakeLive, inhibitor_factory=_FintoBlocco)
+    win.resize(1200, 700)
+    win.show()
+    win.on_connected("E-M10MarkIV")
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("isospeedvalue") is not None)
+    win._remote_view.set_frame(QImage(64, 48, QImage.Format.Format_RGB32))
+    yield win
+    win.close()
+
+
+def test_the_sequence_section_remembers_its_values(windows, qapp, settings):
+    settings.setValue("sequence/interval", 10)
+    settings.setValue("sequence/duration", 600)
+    win = windows(settings)
+    sezione = win._remote_panel.sequence
+    assert (sezione.interval(), sezione.duration()) == (10, 600)
+    sezione._interval.step(1)
+    sezione._duration.step(-1)
+    assert int(settings.value("sequence/interval")) == 15
+    assert int(settings.value("sequence/duration")) == 300
+    assert sezione.summary_text() == "20 scatti · video di meno di 1 s a 25 fps"
+
+
+def test_the_summary_follows_the_exposure_read_from_the_camera(seq_win, qapp):
+    win = seq_win
+    sezione = win._remote_panel.sequence
+    assert _attendi(qapp, lambda: sezione.summary_text() == "360 scatti · video di 14 s a 25 fps")
+    _PropsStubClient.valori = {"takemode": "M", "shutspeedvalue": '60"'}
+    win.remote_read_props.emit()
+    assert _attendi(qapp, lambda: sezione.summary_text() == (
+        "la posa dura più dell'intervallo: scatti uno dopo l'altro, circa 15 in 30 min"))
+
+
+def test_start_takes_the_snapshot_then_shoots_at_the_interval(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert win._remote_panel.sequence.is_running()
+    assert _attendi(qapp, lambda: ("list_media", False) in _RecordingClient.chiamate)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert win._sequence_before == {"/DCIM/100OLYMP/P0000001.JPG", "/DCIM/100OLYMP/P0000001.ORF"}
+    assert _FintoBlocco.istanze[-1].eventi == [("start", 300)]
+    assert not win._remote_panel._shoot.isEnabled() and not win._remote_panel._movie.isEnabled()
+    assert not win._remote_panel.props.row("isospeedvalue").isEnabled()
+    assert _attendi(qapp, lambda: _scatti() >= 2, 3.0), "il secondo scatto non è partito"
+    assert _attendi(qapp, lambda: win._remote_panel.sequence.progress_texts()[0].startswith("Scatto 2"))
+
+
+def test_stop_ends_the_sequence_and_leaves_the_remote(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    win._remote_panel.sequence._button.click()            # Ferma
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert win._sequence_result is not None and win._sequence_result.taken >= 1
+    assert not win._sequence.is_running() and not win._remote_panel.sequence.is_running()
+    assert _FintoBlocco.istanze[-1].eventi[-1] == ("stop",)
+    nomi = [c[0] for c in _RecordingClient.chiamate]
+    assert "stop_liveview" in nomi and "ensure_play_mode" in nomi
+
+
+def test_the_sequence_ends_by_itself_at_the_duration(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 2)                           # due scatti: a 0 e a 1 s
+    assert _attendi(qapp, lambda: not win._remote_active, 6.0)
+    assert win._sequence_result.taken == 2 and not win._sequence_result.aborted
+    assert _scatti() == 2
+
+
+def test_focus_clicks_and_the_shoot_shortcut_are_ignored_during_a_sequence(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    prima = _scatti()
+    win.on_remote_focus_requested(10, 10)
+    win._shortcut_shoot.activated.emit()
+    _attendi(qapp, lambda: False, 0.3)
+    assert not [c for c in _RecordingClient.chiamate if c[0] == "assign_af"]
+    assert _scatti() == prima                              # il prossimo è fra un secondo
+
+
+def test_a_failed_shot_is_counted_and_the_sequence_goes_on(seq_win, qapp):
+    win = seq_win
+    _SequenceStubClient.guasti = 1
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 2, 3.0)
+    assert _attendi(qapp, lambda: win._remote_panel.sequence.progress_texts()[1].endswith("1 saltato"))
+    assert win._sequence.is_running()
+
+
+def test_three_failed_shots_end_the_sequence_as_aborted(seq_win, qapp):
+    win = seq_win
+    _SequenceStubClient.guasti = 99
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: win._sequence_result is not None, 6.0)
+    assert win._sequence_result.aborted and win._sequence_result.skipped == 3
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert _scatti() == 3
+
+
+def test_the_snapshot_waits_after_a_manual_shot(seq_win, qapp, monkeypatch):
+    win = seq_win
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 0.8)
+    win._remote_panel._shoot.click()
+    assert _attendi(qapp, lambda: _scatti() == 1 and not win._shot_in_flight)
+    win.on_sequence_start(1, 300)
+    _attendi(qapp, lambda: False, 0.4)
+    assert ("list_media", False) not in _RecordingClient.chiamate, "istantanea troppo presto"
+    assert _attendi(qapp, lambda: ("list_media", False) in _RecordingClient.chiamate, 2.0)
+    assert _attendi(qapp, lambda: len(win._sequence_before or ()) == 4)    # la foto a mano c'è già
+
+
+def test_stop_while_preparing_cancels_the_start(seq_win, qapp, monkeypatch):
+    win = seq_win
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 5.0)
+    win._last_shot_end = _time.monotonic()
+    win.on_sequence_start(1, 300)
+    assert win._remote_panel.sequence.is_running()
+    win.on_sequence_stop()
+    assert not win._remote_panel.sequence.is_running() and not win._sequence.is_running()
+    _attendi(qapp, lambda: False, 0.3)
+    assert ("list_media", False) not in _RecordingClient.chiamate and _scatti() == 0
+    assert win._remote_active                                # resta nel telecomando
+
+
+def test_a_failed_snapshot_still_starts_the_sequence(seq_win, qapp):
+    win = seq_win
+    _SequenceStubClient.istantanea_rotta = True
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert win._sequence_before is None
+
+
+def test_leaving_during_a_sequence_asks_first(seq_win, qapp, monkeypatch):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: False)
+    win._view_grid.click()
+    assert win._remote_active and not win._remote_leaving and win._sequence.is_running()
+    assert win._view_remote.isChecked() and not win._view_grid.isChecked()
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
+    win._view_grid.click()
+    assert not win._sequence.is_running()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert win._sequence_result is not None and win._sequence_result.taken >= 1
+
+
+def test_closing_during_a_sequence_asks_first(seq_win, qapp, monkeypatch):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: False)
+    assert win.close() is False
+    assert win.isVisible() and win._sequence.is_running() and not win._closing
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
+    assert win.close() is True
+    assert not win._sequence.is_running()
+    assert _FintoBlocco.istanze[-1].eventi[-1] == ("stop",)
+
+
+def test_the_review_is_shorter_during_a_fast_sequence(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, win._remote_view.is_reviewing)
+    assert win._remote_view._review_timer.interval() == 500     # metà dell'intervallo
+
+
+def test_the_sequence_waits_while_the_remote_is_not_ready(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    win._remote_entered = False                               # come durante un rientro nel live
+    prima = _scatti()
+    _attendi(qapp, lambda: False, 1.5)
+    assert _scatti() == prima
+    win._remote_entered = True
+    assert _attendi(qapp, lambda: _scatti() == prima + 1, 2.0)
