@@ -963,16 +963,22 @@ def test_a_listing_arriving_in_remote_mode_leaves_the_view_alone(remote_win, qap
 
 
 def test_resume_that_finishes_inside_the_call_leaves_downloading_false(remote_win, qapp):
+    from PyQt6.QtCore import pyqtSlot as _slot
     win = remote_win
 
-    class _Scarico:
+    class _Scarico(QObject):
+        # resume() ora arriva in coda, sul thread del worker (qui quello del test):
+        # la fine del trasferimento arriva comunque dopo che il flag è stato acceso.
+        @_slot()
         def resume(self):
-            win.on_download_finished()      # arriva dentro la chiamata, come dal vero
+            win.on_download_finished()
 
-    win._download_worker = _Scarico()
+    finto = _Scarico()
+    win._download_worker = finto
     win.on_resume()
+    assert win._downloading                 # acceso prima che il worker riparta
+    assert _attendi(qapp, lambda: not win._downloading)
     win._download_worker = None        # il finto non sa farsi cancellare alla chiusura
-    assert not win._downloading
     assert _attendi(qapp, lambda: win._view_remote.isEnabled())
 
 
@@ -2133,10 +2139,17 @@ def test_a_failed_listing_keeps_the_sequence_for_the_next_one(fine_win, qapp):
 def test_an_ordinary_download_forgets_a_pending_sequence_job(fine_win, qapp, tmp_path):
     from olympus_connect.gui.sequence import SequenceJob
     win = fine_win
-    win._sequence_job = SequenceJob(tmp_path / "x", [], True, "Full HD", 25)
+    cartella = tmp_path / "Sequenza vecchia"
+    cartella.mkdir()
+    foto = [cartella / "P1.JPG", cartella / "P2.JPG"]
+    for f in foto:
+        f.write_bytes(b"jpeg")
+    win._sequence_job = SequenceJob(cartella, foto, True, "Full HD", 25)   # un video da fare
     win._start_download([])
     assert _attendi(qapp, lambda: not win._downloading)
+    _attendi(qapp, lambda: False, 0.3)
     assert win._sequence_job is None and _FintoMontaggio.istanze == []
+    assert win.statusBar().currentMessage() != "Sequenza scaricata: monto il video…"
 
 
 def test_the_grid_download_still_marks_files_as_present(fine_win, qapp, tmp_path):
@@ -2234,3 +2247,92 @@ def test_the_live_sentinel_restarts_when_the_entry_is_confirmed(seq_win, qapp):
     prima = live.armato
     win.on_remote_entered("A", None)
     assert live.armato == prima + 1
+
+
+# --- sequenze: casi dalla revisione della fine sequenza ---------------------------------
+
+def test_without_snapshot_and_without_any_listing_nothing_is_offered(fine_win, qapp):
+    """Né istantanea né un elenco letto prima: le foto della sequenza non si
+    distinguono dalle vecchie, e offrire tutta la scheda sarebbe sbagliato."""
+    win = fine_win
+    assert win._sequence_known is None                      # la finestra non ha mai elencato
+    _SequenceStubClient.istantanea_rotta = True
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    assert "Non riesco a distinguere le foto della sequenza" in dialog.message()
+    assert dialog._download is None
+    dialog._close.click()
+
+
+def test_a_pending_sequence_survives_reentering_the_remote(fine_win, qapp):
+    win = fine_win
+    _SequenceStubClient.elenco_rotto = 1
+    win.on_sequence_start(1, 2)
+    assert _attendi(qapp, lambda: not win._remote_active and not win._listing, 10.0)
+    assert win._sequence_result is not None and win._sequence_dialog is None
+    win._view_remote.click()                                # la fotocamera è tornata: si rientra
+    assert _attendi(qapp, lambda: win._remote_entered, 5.0)
+    win._view_grid.click()
+    assert _attendi(qapp, lambda: win._sequence_dialog is not None, 10.0), "la sequenza è andata persa"
+    assert win._sequence_dialog.message().startswith("Sequenza finita: 2 foto.")
+
+
+def test_the_listing_after_a_sequence_waits_for_the_last_shot(fine_win, qapp, monkeypatch):
+    win = fine_win
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 1.0)
+    win.on_sequence_start(1, 2)
+    assert _attendi(qapp, lambda: not win._remote_active, 10.0)
+    finito = _time.monotonic()
+    elenchi = lambda: _RecordingClient.chiamate.count(("list_media", True))  # noqa: E731
+    prima = elenchi()
+    assert win._listing and not win._view_remote.isEnabled()
+    assert _attendi(qapp, lambda: elenchi() > prima, 3.0)
+    assert _time.monotonic() - win._last_shot_end >= 0.9
+    assert _attendi(qapp, lambda: win._sequence_dialog is not None, 5.0)
+    del finito
+
+
+def test_no_remote_while_the_video_is_being_made(fine_win, qapp):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: len(_FintoMontaggio.istanze) == 1, 5.0)
+    assert not win._view_remote.isEnabled()
+    win.enter_remote()
+    assert not win._remote_active
+    _FintoMontaggio.istanze[0].done.emit(str(_FintoMontaggio.istanze[0].out))
+    assert _attendi(qapp, win._view_remote.isEnabled)
+
+
+def test_photos_that_did_not_download_are_reported(fine_win, qapp, monkeypatch, tmp_path):
+    win = fine_win
+    vero = _scarico_finto
+
+    def scarico(client, job, on_progress=None, should_cancel=None, **kw):
+        if job.dest.name == "P0000003.JPG":
+            raise OSError("disco pieno")
+        return vero(client, job, on_progress, should_cancel, **kw)
+    monkeypatch.setattr("olympus_connect.gui.workers.download", scarico)
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._video.setChecked(False)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: "(1 non scaricate)" in win.statusBar().currentMessage(), 5.0)
+    assert win.statusBar().currentMessage().startswith("Sequenza scaricata: 1 foto in ")
+
+
+def test_resume_after_a_pause_runs_the_download_off_the_window_thread(windows, qapp, settings,
+                                                                     tmp_path, monkeypatch):
+    from PyQt6.QtCore import QThread
+    from olympus_connect.gui import workers
+    thread_della_finestra = QThread.currentThread()
+    dove = []
+
+    def run(self):
+        dove.append(QThread.currentThread())
+        self.finished.emit()
+    monkeypatch.setattr(workers.DownloadWorker, "run", run)
+    win = windows(settings)
+    win._start_download([])
+    assert _attendi(qapp, lambda: len(dove) == 1)
+    win.on_resume()
+    assert _attendi(qapp, lambda: len(dove) == 2)
+    assert dove[1] is not thread_della_finestra, "resume() è girato sul thread della finestra"

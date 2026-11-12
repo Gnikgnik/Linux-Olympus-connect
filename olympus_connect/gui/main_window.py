@@ -15,7 +15,7 @@ from importlib import resources
 from pathlib import Path
 
 from PyQt6.QtCore import (
-    QEventLoop, QSettings, QSize, Qt, QThread, QTimer, pyqtSignal, pyqtSlot,
+    QEventLoop, QMetaObject, QSettings, QSize, Qt, QThread, QTimer, pyqtSignal, pyqtSlot,
 )
 from PyQt6 import sip
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
@@ -174,7 +174,13 @@ class MainWindow(QMainWindow):
         self._auto_reentries = 0        # rientri automatici di fila durante una sequenza
         self._pause_after_stall = False  # la pausa è cominciata con il live già fermo
         # Fine sequenza: finestra di scelta, scarico nella cartella dedicata, video.
-        self._sequence_known: set[str] = set()     # file noti prima di entrare nel telecomando
+        self._sequence_known: set[str] | None = None   # file noti entrando nel telecomando
+        self._listed_ok = False                    # c'è stato almeno un elenco riuscito
+        # Una sequenza finita aspetta l'elenco che la segue (anche se fallisce e
+        # si rientra nel telecomando): risultato e insiemi di confronto insieme.
+        self._sequence_end_before: set[str] | None = None
+        self._sequence_end_known: set[str] | None = None
+        self._sequence_missing = 0                 # foto della sequenza non scaricate
         self._sequence_dialog: SequenceEndDialog | None = None
         self._sequence_offer: tuple | None = None  # (foto, risultato) mentre la finestra è aperta
         self._sequence_job: SequenceJob | None = None
@@ -710,6 +716,7 @@ class MainWindow(QMainWindow):
             # si tocca la vista né si creano worker: l'elenco si rifà all'uscita.
             return
         self._model.set_jobs(jobs)
+        self._listed_ok = True
         # I worker prima di tutto il resto: on_filter_changed passa da
         # set_view, che chiede le miniature visibili. Se il collegamento al
         # worker non esiste ancora, quella richiesta parte nel vuoto.
@@ -1029,7 +1036,10 @@ class MainWindow(QMainWindow):
         # azzerano il flag; impostarlo dopo lo lascerebbe vero per sempre.
         self._downloading = True
         self._update_remote_button()
-        self._download_worker.resume()
+        # Sul thread del worker: chiamato da qui, il trasferimento girerebbe sul
+        # thread della finestra e la bloccherebbe fino alla fine.
+        QMetaObject.invokeMethod(self._download_worker, "resume",
+                                 Qt.ConnectionType.QueuedConnection)
 
     @pyqtSlot(str)
     def on_paused(self, message: str) -> None:
@@ -1067,7 +1077,8 @@ class MainWindow(QMainWindow):
     def _update_remote_button(self) -> None:
         self._view_remote.setEnabled(
             self._remote_active or (bool(self._connected_model)
-                                    and not self._downloading and not self._listing))
+                                    and not self._downloading and not self._listing
+                                    and self._timelapse_worker is None))
 
     def _set_library_controls(self, enabled: bool) -> None:
         for pulsante in self._filter_boxes.values():
@@ -1092,7 +1103,8 @@ class MainWindow(QMainWindow):
         if self._remote_active:
             self._view_remote.setChecked(True)
             return
-        if not self._connected_model or self._downloading:
+        if (not self._connected_model or self._downloading or self._listing
+                or self._timelapse_worker is not None):
             self._view_remote.setChecked(False)
             return
         self._remote_active = True
@@ -1103,12 +1115,11 @@ class MainWindow(QMainWindow):
         self._live_down = None
         self._remote_leaving = False       # mai ereditato da un'uscita precedente
         self._remote_props = {}
-        self._sequence_known = self._model.camera_paths()
+        self._sequence_known = self._model.camera_paths() if self._listed_ok else None
         self._props_pending = 0
         self._snapshot_timer.stop()
         self._sequence_preparing = False
         self._sequence_before = None
-        self._sequence_result = None       # una sequenza mai scaricata si dimentica qui
         self._live_paused = False
         self._live_waking = False
         self._auto_reentries = 0
@@ -1567,12 +1578,20 @@ class MainWindow(QMainWindow):
         self._remote_panel.set_sequence_running(False)
         if result is None:
             return
-        self._sequence_result = result
+        self._keep_sequence_end(result)
         self.statusBar().showMessage(
             "Sequenza interrotta: la fotocamera non risponde." if result.aborted
             else "Sequenza finita.")
         if self._remote_active and not self._remote_leaving and not self._closing:
             self.exit_remote(self._remote_exit_view)
+
+    def _keep_sequence_end(self, result: SequenceResult) -> None:
+        """Una sequenza è finita: il risultato e gli elenchi per riconoscerne le
+        foto restano fino al primo elenco riuscito, anche se intanto si rientra
+        nel telecomando. Solo la fine di un'altra sequenza li sostituisce."""
+        self._sequence_result = result
+        self._sequence_end_before = self._sequence_before
+        self._sequence_end_known = self._sequence_known
 
     def _offer_sequence(self, jobs: list) -> None:
         """Dopo l'elenco che segue una sequenza: quali foto ha fatto, e cosa farne."""
@@ -1580,17 +1599,20 @@ class MainWindow(QMainWindow):
             return
         risultato, self._sequence_result = self._sequence_result, None
         file = [j.media for j in jobs]
-        riserva = self._sequence_before is None
-        prima = self._sequence_known if riserva else self._sequence_before
-        self._sequence_before = None
+        riserva = self._sequence_end_before is None
+        prima = self._sequence_end_known if riserva else self._sequence_end_before
+        self._sequence_end_before = self._sequence_end_known = None
+        sconosciute = prima is None         # né istantanea né un elenco di prima
+        prima = prima or set()
         nuovi = [m for m in file if m.camera_path not in prima]
-        foto = sequence_files(prima, file)
+        foto = [] if sconosciute else sequence_files(prima, file)
         risoluzione = str(self._settings.value("sequence/resolution", DEFAULT_RESOLUTION))
         dialog = SequenceEndDialog(
             photos=len(foto), skipped=risultato.skipped, aborted=risultato.aborted,
             only_raw=not foto and any(m.kind is MediaKind.RAW for m in nuovi),
             since_remote_entry=riserva, ffmpeg=find_ffmpeg() is not None,
-            resolution=risoluzione, fps=self._sequence_fps(), parent=self)
+            resolution=risoluzione, fps=self._sequence_fps(), unknown=sconosciute,
+            parent=self)
         self._sequence_dialog = dialog
         self._sequence_offer = (foto, risultato)
         dialog.finished.connect(self._on_sequence_dialog)
@@ -1633,9 +1655,12 @@ class MainWindow(QMainWindow):
 
     def _after_sequence_download(self, lavoro: SequenceJob) -> None:
         presenti = [p for p in lavoro.frames if p.exists()]
+        self._sequence_missing = len(lavoro.frames) - len(presenti)
+        mancanti = (f" ({self._sequence_missing} non scaricate)"
+                    if self._sequence_missing else "")
         if not lavoro.video:
             self.statusBar().showMessage(
-                f"Sequenza scaricata: {len(presenti)} foto in {lavoro.folder}")
+                f"Sequenza scaricata: {len(presenti)} foto in {lavoro.folder}{mancanti}")
             return
         if len(presenti) < 2:
             self.statusBar().showMessage(
@@ -1648,6 +1673,7 @@ class MainWindow(QMainWindow):
         worker.failed.connect(self.on_timelapse_failed)
         worker.cancelled.connect(self.on_timelapse_cancelled)
         self._timelapse_worker = worker
+        self._update_remote_button()        # niente telecomando mentre si monta il video
         self._show_transfer(True)
         self._file_label.setText("Montaggio del video…")
         self._rate_label.setText("")
@@ -1663,6 +1689,7 @@ class MainWindow(QMainWindow):
 
     def _timelapse_over(self, messaggio: str) -> None:
         self._timelapse_worker = None
+        self._update_remote_button()
         self._file_label.setText("")
         self._total_bar.setValue(0)
         self._show_transfer(False)
@@ -1670,7 +1697,9 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def on_timelapse_done(self, percorso: str) -> None:
-        self._timelapse_over(f"Video pronto: {percorso}")
+        mancanti = (f" ({self._sequence_missing} foto non scaricate, il video ne è senza)"
+                    if self._sequence_missing else "")
+        self._timelapse_over(f"Video pronto: {percorso}{mancanti}")
 
     @pyqtSlot(str)
     def on_timelapse_failed(self, messaggio: str) -> None:
@@ -1751,7 +1780,7 @@ class MainWindow(QMainWindow):
             risultato = self._sequence.abort()
             self._remote_panel.set_sequence_running(False)
             if risultato is not None:
-                self._sequence_result = risultato
+                self._keep_sequence_end(risultato)
         self._remote_leaving = True
         self._remote_exit_view = view
         self._remote_panel.set_busy(True)
@@ -1779,7 +1808,7 @@ class MainWindow(QMainWindow):
         self._pause_after_stall = False
         residuo = self._sequence.abort()        # di norma è già ferma
         if residuo is not None and self._sequence_result is None:
-            self._sequence_result = residuo
+            self._keep_sequence_end(residuo)
         self._remote_panel.set_sequence_running(False)
         for scorciatoia in (self._shortcut_shoot, self._shortcut_movie):
             scorciatoia.setEnabled(False)
@@ -1796,7 +1825,19 @@ class MainWindow(QMainWindow):
         self._update_remote_button()
         # Un ListWorker nuovo ha un client nuovo, senza modalità ricordata:
         # ensure_play_mode rimette davvero la fotocamera in riproduzione, e
-        # le foto e i video appena fatti compaiono nell'elenco.
+        # le foto e i video appena fatti compaiono nell'elenco. Dopo una
+        # sequenza l'elenco aspetta che la scheda veda l'ultimo scatto.
+        attesa = self.SNAPSHOT_SETTLE - (time.monotonic() - self._last_shot_end)
+        if self._sequence_result is not None and attesa > 0:
+            self._listing = True            # niente telecomando nel frattempo
+            self._update_remote_button()
+            QTimer.singleShot(int(attesa * 1000), self._refresh_after_sequence)
+            return
+        self.on_refresh()
+
+    def _refresh_after_sequence(self) -> None:
+        if self._closing:
+            return
         self.on_refresh()
 
     def _teardown_remote(self, deadline: float | None = None) -> None:
@@ -1895,7 +1936,12 @@ class MainWindow(QMainWindow):
         # connessioni da due thread, e il processo aborta.
         for thread in self._threads:
             thread.quit()
-            thread.wait(2000)
+            if not thread.wait(2000):
+                # Ancora dentro un lavoro: distruggerlo con la finestra fa abortire
+                # il processo. Si stacca, come i thread del telecomando.
+                thread.setParent(None)
+                sip.transferto(thread, None)
+                _DETACHED.append((thread, None))
         self._threads.clear()
 
         for worker in (self._list_worker, self._thumb_worker,

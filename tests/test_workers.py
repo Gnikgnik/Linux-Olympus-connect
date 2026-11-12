@@ -882,6 +882,7 @@ def test_the_last_read_wins(qapp):
 
 import os  # noqa: E402
 import threading  # noqa: E402
+import time  # noqa: E402
 
 from olympus_connect.core.timelapse import find_ffmpeg  # noqa: E402
 from olympus_connect.gui.workers import RemoteWorker, TimelapseWorker  # noqa: E402
@@ -1088,3 +1089,16 @@ def test_timelapse_cancelled_before_it_starts_never_runs_ffmpeg(qapp, tmp_path):
     worker.run()
     assert ev["cancelled"] == 1 and ev["done"] == [] and ev["failed"] == []
     assert not (tmp_path / "partito").exists()
+
+
+def test_timelapse_cancel_does_not_wait_for_ffmpeg_to_finish(qapp, tmp_path):
+    # Sul campo ffmpeg, con terminate(), ha impiegato 13 s a uscire in 4K: il
+    # parziale si butta comunque, quindi si uccide subito.
+    cartella, foto = _foto(tmp_path)
+    ffmpeg = _finto_ffmpeg(tmp_path, "trap '' TERM\necho meta > \"$out\"\necho frame=1\nexec sleep 30\n")
+    worker, ev = _timelapse(foto, cartella / "timelapse.mp4", ffmpeg)
+    worker.progress.connect(lambda n, t: threading.Thread(target=worker.cancel).start())
+    inizio = time.monotonic()
+    worker.run()
+    assert time.monotonic() - inizio < 5
+    assert ev["cancelled"] == 1 and not (cartella / "timelapse.mp4.part").exists()

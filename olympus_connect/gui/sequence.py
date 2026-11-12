@@ -243,28 +243,36 @@ class SequenceEndDialog(QDialog):
     def __init__(self, photos: int, skipped: int = 0, aborted: bool = False,
                  only_raw: bool = False, since_remote_entry: bool = False,
                  ffmpeg: bool = True, resolution: str = DEFAULT_RESOLUTION,
-                 fps: int = DEFAULT_FRAME_RATE, parent=None) -> None:
+                 fps: int = DEFAULT_FRAME_RATE, unknown: bool = False, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Sequenza")
+        if unknown:
+            photos = 0                      # senza un elenco di partenza non si sa quali sono
         self._download: QPushButton | None = None
         self._later: QPushButton | None = None
         self._close: QPushButton | None = None
 
         saltate = f" ({skipped} saltate)" if skipped else ""
         if aborted:
-            righe = [f"Sequenza interrotta: la fotocamera non risponde. {photos} foto{saltate}."]
+            righe = ["Sequenza interrotta: la fotocamera non risponde."]
         else:
-            righe = [f"Sequenza finita: {photos} foto{saltate}."]
-        if since_remote_entry and photos:
-            righe.append("Sono le foto nuove dall'ingresso nel telecomando: comprendono "
-                         "quelle scattate a mano prima della sequenza.")
-        if photos:
-            righe.append("Scaricarle in una cartella dedicata?")
-        elif only_raw:
-            righe.append("La fotocamera ha salvato solo RAW: niente da scaricare qui, "
-                         "niente video.")
+            righe = ["Sequenza finita."]
+        if unknown:
+            righe.append("Non riesco a distinguere le foto della sequenza da quelle che "
+                         "c'erano già sulla scheda: scaricale dalla griglia.")
         else:
-            righe.append("Nessuna foto nuova sulla scheda.")
+            righe[0] = (f"Sequenza interrotta: la fotocamera non risponde. {photos} foto{saltate}."
+                        if aborted else f"Sequenza finita: {photos} foto{saltate}.")
+            if since_remote_entry and photos:
+                righe.append("Sono le foto nuove dall'ingresso nel telecomando: comprendono "
+                             "quelle scattate a mano prima della sequenza.")
+            if photos:
+                righe.append("Scaricarle in una cartella dedicata?")
+            elif only_raw:
+                righe.append("La fotocamera ha salvato solo RAW: niente da scaricare qui, "
+                             "niente video.")
+            else:
+                righe.append("Nessuna foto nuova sulla scheda.")
 
         colonna = QVBoxLayout(self)
         colonna.setSpacing(10)

@@ -474,11 +474,15 @@ class TimelapseWorker(QObject):
         self._process: subprocess.Popen | None = None
 
     def cancel(self) -> None:
-        """Thread-safe: si chiama dal thread della finestra."""
+        """Thread-safe: si chiama dal thread della finestra.
+
+        Il file parziale si butta comunque: niente terminate(), che lascia a
+        ffmpeg il tempo di finire i fotogrammi in lavorazione (13 s misurati in
+        4K), ma kill(). Così anche la chiusura del programma non lo aspetta."""
         self._cancel.set()
         processo = self._process
         if processo is not None and processo.poll() is None:
-            processo.terminate()
+            processo.kill()
 
     def _kill_process(self) -> None:
         """Dopo un errore imprevisto ffmpeg non deve restare a lavorare da solo."""
@@ -535,7 +539,7 @@ class TimelapseWorker(QObject):
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errori,
                     text=True)
                 if self._cancel.is_set():       # annullato proprio mentre partiva
-                    self._process.terminate()
+                    self._process.kill()
                 for riga in self._process.stdout:
                     scritti = parse_progress(riga)
                     if scritti is not None:
