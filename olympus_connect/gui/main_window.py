@@ -91,6 +91,8 @@ class MainWindow(QMainWindow):
     remote_read_props = pyqtSignal()
     remote_set_prop = pyqtSignal(str, str)
     remote_snapshot_names = pyqtSignal()
+    remote_pause_live = pyqtSignal()
+    remote_resume_live = pyqtSignal(int)
 
     # Letto subito dopo uno scatto, l'elenco della scheda non contiene ancora
     # quella foto (prova sul campo del 2026-11-11): l'istantanea aspetta.
@@ -162,6 +164,10 @@ class MainWindow(QMainWindow):
                                             inhibitor=inhibitor_factory(), parent=self)
         self._sequence.shoot_requested.connect(self._sequence_shoot)
         self._sequence.ended.connect(self._on_sequence_ended)
+        self._sequence.wake_requested.connect(self._wake_live)
+        # Con intervalli lunghi il live si spegne fra uno scatto e l'altro.
+        self._live_paused = False       # il live è spento di proposito fra due scatti
+        self._live_waking = False       # è partita la riaccensione, si aspetta il primo fotogramma
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
@@ -1067,6 +1073,8 @@ class MainWindow(QMainWindow):
         self._sequence_preparing = False
         self._sequence_before = None
         self._sequence_result = None       # una sequenza mai scaricata si dimentica qui
+        self._live_paused = False
+        self._live_waking = False
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
         # le loro richieste fallirebbero.
@@ -1099,6 +1107,7 @@ class MainWindow(QMainWindow):
         remote.props_failed.connect(self.on_remote_props_failed)
         remote.exposing.connect(self.on_remote_exposing)
         remote.names_read.connect(self.on_remote_names)
+        remote.live_resumed.connect(self.on_remote_live_resumed)
         coda = Qt.ConnectionType.QueuedConnection
         self.remote_enter.connect(remote.enter, coda)
         self.remote_focus.connect(remote.focus, coda)
@@ -1109,6 +1118,8 @@ class MainWindow(QMainWindow):
         self.remote_read_props.connect(remote.read_props, coda)
         self.remote_set_prop.connect(remote.set_prop, coda)
         self.remote_snapshot_names.connect(remote.snapshot_names, coda)
+        self.remote_pause_live.connect(remote.pause_live, coda)
+        self.remote_resume_live.connect(remote.resume_live, coda)
 
         live = self._live_factory()
         live.listening.connect(self.on_live_listening)
@@ -1148,6 +1159,12 @@ class MainWindow(QMainWindow):
     def on_live_frame(self) -> None:
         if self._live_worker is None:
             return
+        if self._live_paused:
+            if not self._live_waking:
+                self._live_worker.take_frame()      # la coda del live appena spento
+                return
+            self._live_paused = False               # il live è tornato: si può scattare
+            self._live_waking = False
         immagine = self._live_worker.take_frame()
         if immagine is not None:
             self._remote_view.set_frame(immagine)
@@ -1169,8 +1186,15 @@ class MainWindow(QMainWindow):
     def _live_lost(self, kind: str) -> None:
         """Il worker del live avvisa una volta sola per ogni interruzione:
         durante uno scatto l'avviso si ricorda e si mostra alla fine."""
+        if self._live_paused:
+            if self._live_waking:
+                self._reenter_after_pause()         # riacceso, ma non è arrivato niente
+            return
         self._live_down = kind
         if self._shot_in_flight:
+            return
+        if self._sequence.is_running():
+            self.on_live_retry()                    # nessuno è lì a premere Riprova
             return
         self._remote_view.show_message(self._LIVE_DOWN[kind], retry=True)
 
@@ -1407,7 +1431,8 @@ class MainWindow(QMainWindow):
                 and not self._closing and not self._shot_in_flight
                 and not self._remote_panel.is_recording()
                 and self._live_down is None and not self._live_restart_pending
-                and self._props_pending == 0 and self._mode_to_restore is None)
+                and self._props_pending == 0 and self._mode_to_restore is None
+                and not self._live_paused)
 
     def on_sequence_start(self, interval: int, duration: int) -> None:
         if self._sequence.is_running() or self._sequence_preparing:
@@ -1488,8 +1513,47 @@ class MainWindow(QMainWindow):
             self.exit_remote(self._remote_exit_view)
 
     def _after_shot_review(self) -> None:
-        """Fine dell'anteprima di uno scatto (o subito, se l'anteprima non c'è)."""
+        """Fine dell'anteprima di uno scatto (o subito, se l'anteprima non c'è).
+
+        In una sequenza con intervalli lunghi il live si spegne fino a poco
+        prima dello scatto successivo: sul campo si riaccende in 0,3 s senza
+        rientrare in modalità scatto, e la batteria dura di più.
+        """
+        if (self._sequence.may_pause_live() and self._remote_active
+                and not self._remote_leaving and not self._closing
+                and not self._shot_in_flight and self._live_worker is not None):
+            self._live_restart_pending = False
+            self._live_down = None
+            self._live_paused = True        # da subito: nessuno scatto finché il live non torna
+            self._live_waking = False
+            self._live_worker.disarm()      # il live si ferma di proposito: niente avvisi
+            self._remote_view.show_message("Live in pausa fino al prossimo scatto.")
+            self.remote_pause_live.emit()
+            return
         self._restart_live_after_shot()
+
+    def _wake_live(self) -> None:
+        """Il regista avvisa 5 s prima dello scatto: il live in pausa si riaccende."""
+        if not self._live_paused or self._live_waking:
+            return
+        if (not self._remote_active or self._remote_leaving or self._closing
+                or self._live_worker is None):
+            return
+        self._live_waking = True
+        self._remote_view.show_message("Il live riparte…")
+        self._live_worker.arm()             # riapre il passaggio nel firewall, riarma la sentinella
+        self.remote_resume_live.emit(self._live_port)
+
+    @pyqtSlot(bool)
+    def on_remote_live_resumed(self, ok: bool) -> None:
+        if not ok and self._live_paused:
+            self._reenter_after_pause()
+
+    def _reenter_after_pause(self) -> None:
+        """La riaccensione semplice non è bastata: rientro completo in modalità scatto."""
+        self._live_paused = False
+        self._live_waking = False
+        self.on_live_retry()
 
     def exit_remote(self, view: str) -> None:
         if not self._remote_active or self._remote_leaving:
@@ -1534,6 +1598,8 @@ class MainWindow(QMainWindow):
         self._sequence_preparing = False
         self._snapshot_timer.stop()
         self._props_pending = 0
+        self._live_paused = False
+        self._live_waking = False
         residuo = self._sequence.abort()        # di norma è già ferma
         if residuo is not None and self._sequence_result is None:
             self._sequence_result = residuo
@@ -1571,7 +1637,8 @@ class MainWindow(QMainWindow):
         for segnale in (self.remote_enter, self.remote_focus, self.remote_shoot,
                         self.remote_movie_start, self.remote_movie_stop, self.remote_leave,
                         self.remote_read_props, self.remote_set_prop,
-                        self.remote_snapshot_names):
+                        self.remote_snapshot_names, self.remote_pause_live,
+                        self.remote_resume_live):
             try:
                 segnale.disconnect()
             except TypeError:

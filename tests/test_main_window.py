@@ -1767,3 +1767,151 @@ def test_leaving_with_a_shot_in_flight_survives_its_late_answer(seq_win, qapp, m
     assert _attendi(qapp, lambda: not win._remote_active, 6.0)
     assert win._sequence_result is not None and win._sequence_result.taken == 0
     assert not win._shot_in_flight and not win._remote_panel.sequence.is_running()
+
+
+# --- sequenze: live in pausa fra gli scatti ----------------------------------------------
+
+@pytest.fixture
+def pausa_win(seq_win, monkeypatch):
+    """Le soglie vere sono 60 s e 5 s: qui si accorciano, le regole restano quelle."""
+    import olympus_connect.core.sequence as seq
+    monkeypatch.setattr(seq, "PAUSE_LIVE_FROM", 2)
+    monkeypatch.setattr(seq, "LIVE_LEAD", 0.4)
+    monkeypatch.setattr(seq, "MIN_PAUSE", 0.1)
+    return seq_win
+
+
+def _chiamate(nome):
+    return [c for c in _RecordingClient.chiamate if c[0] == nome]
+
+
+def _fotogramma(win):
+    live = _FakeLive.istanze[-1]
+    live.immagine = QImage(64, 48, QImage.Format.Format_RGB32)
+    live.frame_ready.emit()
+
+
+def test_the_live_pauses_after_the_review_and_wakes_before_the_next_shot(pausa_win, qapp):
+    win = pausa_win
+    live = _FakeLive.istanze[-1]
+    armato = live.armato
+    win.on_sequence_start(2, 300)
+    assert _attendi(qapp, lambda: _scatti() == 1)
+    assert _attendi(qapp, lambda: len(_chiamate("stop_liveview")) == 1, 3.0), "il live non va in pausa"
+    assert win._live_paused and not win._live_waking
+    assert win._remote_view.message() == "Live in pausa fino al prossimo scatto."
+    assert not win._remote_view._retry.isVisible()
+    assert _attendi(qapp, lambda: len(_chiamate("start_liveview")) == 2, 3.0), "il live non viene riacceso"
+    assert win._live_waking and live.armato == armato + 1
+    assert _scatti() == 1                                   # non scatta finché il live non è tornato
+    _fotogramma(win)
+    assert _attendi(qapp, lambda: not win._live_paused)
+    assert win._remote_view.message() == ""
+    assert _attendi(qapp, lambda: _scatti() == 2, 3.0)
+
+
+def test_frames_arriving_right_after_the_pause_are_dropped(pausa_win, qapp):
+    win = pausa_win
+    win.on_sequence_start(2, 300)
+    assert _attendi(qapp, lambda: win._live_paused, 3.0)
+    _fotogramma(win)                                        # la coda del live appena spento
+    qapp.processEvents()
+    assert win._live_paused
+    assert win._remote_view.message() == "Live in pausa fino al prossimo scatto."
+
+
+def test_a_live_that_does_not_come_back_makes_the_full_reentry(pausa_win, qapp):
+    win = pausa_win
+    win.on_sequence_start(2, 300)
+    assert _attendi(qapp, lambda: win._live_waking, 4.0)
+    ingressi = len(_chiamate("enter_rec_mode"))
+    _FakeLive.istanze[-1].no_signal.emit()                  # nessun fotogramma entro 3 s
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1)
+    assert not win._live_paused and not win._live_waking
+    assert not win._remote_view._retry.isVisible()
+    assert _attendi(qapp, lambda: win._remote_entered)
+    assert _attendi(qapp, lambda: _scatti() == 2, 3.0)
+
+
+def test_after_a_reentry_from_the_pause_the_next_shot_waits_for_the_settings(
+        pausa_win, qapp, monkeypatch):
+    """Il rientro rimette la modalità della ghiera: si scatta solo dopo la
+    rilettura delle impostazioni (e la modalità scelta dal PC rimessa)."""
+    import threading
+    win = pausa_win
+    via = threading.Event()
+    trattieni = {"si": False}
+    vere_props = _SequenceStubClient.camera_props
+
+    def props_lente(self):
+        if trattieni["si"]:
+            via.wait(5.0)
+        return vere_props(self)
+    monkeypatch.setattr(_SequenceStubClient, "camera_props", props_lente)
+    try:
+        win.on_sequence_start(2, 300)
+        assert _attendi(qapp, lambda: win._live_waking, 4.0)
+        trattieni["si"] = True
+        letture = len(_chiamate("camera_props"))
+        _FakeLive.istanze[-1].no_signal.emit()
+        assert _attendi(qapp, lambda: win._remote_entered)
+        _attendi(qapp, lambda: False, 1.0)                  # lo scatto era dovuto qui
+        assert _scatti() == 1, "scattato prima della rilettura delle impostazioni"
+        assert len(_chiamate("camera_props")) == letture
+        via.set()
+        assert _attendi(qapp, lambda: _scatti() == 2, 3.0)
+        assert len(_chiamate("camera_props")) > letture
+    finally:
+        via.set()
+
+
+def test_a_failed_resume_makes_the_full_reentry(pausa_win, qapp, monkeypatch):
+    win = pausa_win
+    conta = {"n": 0}
+
+    def start_liveview(self, port):
+        conta["n"] += 1
+        _RecordingClient.chiamate.append(("start_liveview", port))
+        if conta["n"] == 1:                                 # la riaccensione dopo la pausa
+            raise RuntimeError("startliveview non riuscito")
+    monkeypatch.setattr(_SequenceStubClient, "start_liveview", start_liveview)
+    win.on_sequence_start(2, 300)
+    ingressi = len(_chiamate("enter_rec_mode"))
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1, 5.0)
+    assert not win._live_paused
+
+
+def test_short_intervals_keep_the_live_on(seq_win, qapp):
+    win = seq_win                                           # soglie vere: 1 s è sotto i 60
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 2, 3.0)
+    assert not _chiamate("stop_liveview") and not win._live_paused
+
+
+def test_stop_during_the_pause_ends_the_sequence_and_resets_the_pause(pausa_win, qapp):
+    win = pausa_win
+    win.on_sequence_start(2, 300)
+    assert _attendi(qapp, lambda: win._live_paused, 3.0)
+    win.on_sequence_stop()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    assert not win._live_paused and not win._live_waking
+    assert win._sequence_result is not None and win._sequence_result.taken == 1
+
+
+def test_a_live_lost_between_two_shots_reenters_by_itself(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    ingressi = len(_chiamate("enter_rec_mode"))
+    _FakeLive.istanze[-1].stalled.emit()
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1)
+    assert not win._remote_view._retry.isVisible()
+    assert _attendi(qapp, lambda: _scatti() >= 2, 3.0)      # la sequenza prosegue
+
+
+def test_outside_a_sequence_a_lost_live_still_offers_retry(seq_win, qapp):
+    win = seq_win
+    _FakeLive.istanze[-1].stalled.emit()
+    assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
+    assert win._remote_view._retry.isVisible()
