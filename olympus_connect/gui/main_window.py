@@ -168,6 +168,7 @@ class MainWindow(QMainWindow):
         # Con intervalli lunghi il live si spegne fra uno scatto e l'altro.
         self._live_paused = False       # il live è spento di proposito fra due scatti
         self._live_waking = False       # è partita la riaccensione, si aspetta il primo fotogramma
+        self._auto_reentries = 0        # rientri automatici di fila durante una sequenza
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
@@ -1075,6 +1076,7 @@ class MainWindow(QMainWindow):
         self._sequence_result = None       # una sequenza mai scaricata si dimentica qui
         self._live_paused = False
         self._live_waking = False
+        self._auto_reentries = 0
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
         # le loro richieste fallirebbero.
@@ -1167,7 +1169,10 @@ class MainWindow(QMainWindow):
             self._live_waking = False
         immagine = self._live_worker.take_frame()
         if immagine is not None:
+            self._auto_reentries = 0                # il live c'è: i rientri hanno funzionato
             self._remote_view.set_frame(immagine)
+
+    MAX_AUTO_REENTRIES = 2      # rientri automatici di fila, senza un fotogramma in mezzo
 
     _LIVE_DOWN = {
         "stalled": "Live interrotto.",
@@ -1193,8 +1198,12 @@ class MainWindow(QMainWindow):
         self._live_down = kind
         if self._shot_in_flight:
             return
-        if self._sequence.is_running():
-            self.on_live_retry()                    # nessuno è lì a premere Riprova
+        if self._sequence.is_running() and self._auto_reentries < self.MAX_AUTO_REENTRIES:
+            # Nessuno è lì a premere Riprova. Ma se il live non torna nemmeno
+            # dopo un paio di rientri non si insiste ogni tre secondi: resta
+            # l'avviso, e la sequenza si ferma da sola dopo tre scatti saltati.
+            self._auto_reentries += 1
+            self.on_live_retry()
             return
         self._remote_view.show_message(self._LIVE_DOWN[kind], retry=True)
 

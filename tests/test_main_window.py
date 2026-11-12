@@ -1915,3 +1915,26 @@ def test_outside_a_sequence_a_lost_live_still_offers_retry(seq_win, qapp):
     _FakeLive.istanze[-1].stalled.emit()
     assert _attendi(qapp, lambda: win._remote_view.message() == "Live interrotto.")
     assert win._remote_view._retry.isVisible()
+
+
+def test_automatic_reentries_stop_after_two_and_leave_the_retry_button(seq_win, qapp):
+    # Se il live non torna, non si rientra ogni tre secondi fino alla fine della sequenza.
+    win = seq_win
+    win.on_sequence_start(5, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    live = _FakeLive.istanze[-1]
+    ingressi = len(_chiamate("enter_rec_mode"))
+    for n in (1, 2):
+        live.no_signal.emit()
+        assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + n)
+        assert _attendi(qapp, lambda: win._remote_entered)
+        assert not win._remote_view._retry.isVisible()
+    live.no_signal.emit()                                   # la terza volta non si insiste
+    _attendi(qapp, lambda: False, 0.3)
+    assert len(_chiamate("enter_rec_mode")) == ingressi + 2
+    assert win._remote_view.message().startswith("Nessuna immagine dalla fotocamera")
+    assert _attendi(qapp, win._remote_view._retry.isVisible, 3.0)      # finita l'anteprima dello scatto
+    assert win._sequence.is_running()
+    _fotogramma(win)                                        # il live torna: il conto riparte
+    assert win._auto_reentries == 0
