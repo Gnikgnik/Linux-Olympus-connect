@@ -1794,20 +1794,20 @@ def _fotogramma(win):
 def test_the_live_pauses_after_the_review_and_wakes_before_the_next_shot(pausa_win, qapp):
     win = pausa_win
     live = _FakeLive.istanze[-1]
-    armato = live.armato
-    win.on_sequence_start(2, 300)
+    win.on_sequence_start(3, 300)
     assert _attendi(qapp, lambda: _scatti() == 1)
+    armato = live.armato                                    # anche l'ingresso arma la sentinella
     assert _attendi(qapp, lambda: len(_chiamate("stop_liveview")) == 1, 3.0), "il live non va in pausa"
     assert win._live_paused and not win._live_waking
     assert win._remote_view.message() == "Live in pausa fino al prossimo scatto."
     assert not win._remote_view._retry.isVisible()
-    assert _attendi(qapp, lambda: len(_chiamate("start_liveview")) == 2, 3.0), "il live non viene riacceso"
+    assert _attendi(qapp, lambda: len(_chiamate("start_liveview")) == 2, 4.0), "il live non viene riacceso"
     assert win._live_waking and live.armato == armato + 1
     assert _scatti() == 1                                   # non scatta finché il live non è tornato
     _fotogramma(win)
     assert _attendi(qapp, lambda: not win._live_paused)
     assert win._remote_view.message() == ""
-    assert _attendi(qapp, lambda: _scatti() == 2, 3.0)
+    assert _attendi(qapp, lambda: _scatti() == 2, 4.0)
 
 
 def test_frames_arriving_right_after_the_pause_are_dropped(pausa_win, qapp):
@@ -1879,6 +1879,7 @@ def test_a_failed_resume_makes_the_full_reentry(pausa_win, qapp, monkeypatch):
     ingressi = len(_chiamate("enter_rec_mode"))
     assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1, 5.0)
     assert not win._live_paused
+    assert _attendi(qapp, lambda: _scatti() == 2, 5.0)      # e la sequenza prosegue
 
 
 def test_short_intervals_keep_the_live_on(seq_win, qapp):
@@ -1933,7 +1934,7 @@ def test_automatic_reentries_stop_after_two_and_leave_the_retry_button(seq_win, 
     live.no_signal.emit()                                   # la terza volta non si insiste
     _attendi(qapp, lambda: False, 0.3)
     assert len(_chiamate("enter_rec_mode")) == ingressi + 2
-    assert win._remote_view.message().startswith("Nessuna immagine dalla fotocamera")
+    assert win._remote_view.message().startswith("Il live non riparte. La sequenza è ferma")
     assert _attendi(qapp, win._remote_view._retry.isVisible, 3.0)      # finita l'anteprima dello scatto
     assert win._sequence.is_running()
     _fotogramma(win)                                        # il live torna: il conto riparte
@@ -2147,3 +2148,89 @@ def test_the_grid_download_still_marks_files_as_present(fine_win, qapp, tmp_path
     assert _attendi(qapp, lambda: not win._downloading, 5.0)
     assert (tmp_path / "dest" / "2026" / "2026-11-11" / "P0000001.JPG").exists()
     assert _attendi(qapp, lambda: all(j.state is JobState.PRESENT for j in win._model._all), 5.0)
+
+
+# --- sequenze: casi dalla revisione della pausa del live ---------------------------------
+
+def test_a_failed_shot_with_the_live_lost_reenters_by_itself(seq_win, qapp, monkeypatch):
+    """La sentinella avvisa una volta sola, durante lo scatto: se poi lo scatto
+    fallisce, il rientro va chiesto lì, o la sequenza si ferma da sola."""
+    win = seq_win
+    vero_scatto = _SequenceStubClient.take_picture
+    stato = {"n": 0}
+
+    def scatto(self, read_timeout=None):
+        stato["n"] += 1
+        if stato["n"] == 1:
+            _FakeLive.istanze[-1].stalled.emit()             # il live si perde durante lo scatto
+            _RecordingClient.chiamate.append(("take_picture",))
+            raise RuntimeError("la fotocamera non ha risposto")
+        vero_scatto(self, read_timeout)
+    monkeypatch.setattr(_SequenceStubClient, "take_picture", scatto)
+    ingressi = len(_chiamate("enter_rec_mode"))
+    win.on_sequence_start(2, 300)
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1, 4.0), \
+        "nessun rientro dopo lo scatto fallito"
+    assert _attendi(qapp, lambda: _scatti() >= 2, 5.0)
+    assert win._sequence.is_running() and win._sequence._state.skipped == 1
+
+
+def test_a_pause_that_starts_with_the_live_already_stopped_wakes_with_a_full_reentry(
+        pausa_win, qapp, monkeypatch):
+    """Dopo una posa lunga il live non riparte con la sola riaccensione: alla
+    sveglia si rientra subito, senza perdere tre secondi a scoprirlo."""
+    win = pausa_win
+    vero_scatto = _SequenceStubClient.take_picture
+
+    def posa_lunga(self, read_timeout=None):
+        _FakeLive.istanze[-1].stalled.emit()
+        vero_scatto(self, read_timeout)
+    monkeypatch.setattr(_SequenceStubClient, "take_picture", posa_lunga)
+    ingressi = len(_chiamate("enter_rec_mode"))
+    riaccensioni = len(_chiamate("start_liveview"))
+    win.on_sequence_start(3, 300)
+    assert _attendi(qapp, lambda: win._live_paused, 4.0)
+    assert win._pause_after_stall
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1, 4.0)
+    # niente riaccensione semplice prima del rientro: solo quella del rientro stesso
+    assert len(_chiamate("start_liveview")) == riaccensioni + 1
+    assert not win._live_paused and not win._pause_after_stall
+
+
+def test_reentries_after_a_pause_count_towards_the_limit(pausa_win, qapp):
+    win = pausa_win
+    win.on_sequence_start(3, 300)
+    assert _attendi(qapp, lambda: win._live_waking, 5.0)
+    live = _FakeLive.istanze[-1]
+    ingressi = len(_chiamate("enter_rec_mode"))
+    live.no_signal.emit()                                   # la riaccensione non porta niente
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 1)
+    assert win._auto_reentries == 1
+    assert _attendi(qapp, lambda: win._remote_entered)
+    live.no_signal.emit()
+    assert _attendi(qapp, lambda: len(_chiamate("enter_rec_mode")) == ingressi + 2)
+    assert _attendi(qapp, lambda: win._remote_entered)
+    live.no_signal.emit()                                   # il terzo no: al limite ci si ferma
+    _attendi(qapp, lambda: False, 0.3)
+    assert len(_chiamate("enter_rec_mode")) == ingressi + 2
+    assert win._remote_view.message().startswith("Il live non riparte.")
+
+
+def test_a_lost_live_during_a_reentry_does_not_start_a_second_one(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(5, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    win._remote_entered = False                              # come a metà di un rientro lento
+    ingressi = len(_chiamate("enter_rec_mode"))
+    _FakeLive.istanze[-1].no_signal.emit()
+    _attendi(qapp, lambda: False, 0.3)
+    assert len(_chiamate("enter_rec_mode")) == ingressi and win._auto_reentries == 0
+
+
+def test_the_live_sentinel_restarts_when_the_entry_is_confirmed(seq_win, qapp):
+    win = seq_win
+    live = _FakeLive.istanze[-1]
+    prima = live.armato
+    win.on_remote_entered("A", None)
+    assert live.armato == prima + 1

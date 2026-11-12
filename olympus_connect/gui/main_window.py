@@ -172,6 +172,7 @@ class MainWindow(QMainWindow):
         self._live_paused = False       # il live è spento di proposito fra due scatti
         self._live_waking = False       # è partita la riaccensione, si aspetta il primo fotogramma
         self._auto_reentries = 0        # rientri automatici di fila durante una sequenza
+        self._pause_after_stall = False  # la pausa è cominciata con il live già fermo
         # Fine sequenza: finestra di scelta, scarico nella cartella dedicata, video.
         self._sequence_known: set[str] = set()     # file noti prima di entrare nel telecomando
         self._sequence_dialog: SequenceEndDialog | None = None
@@ -1111,6 +1112,7 @@ class MainWindow(QMainWindow):
         self._live_paused = False
         self._live_waking = False
         self._auto_reentries = 0
+        self._pause_after_stall = False
         self._remote_exit_view = self.current_view()
         # Miniature e anteprima lavorano in riproduzione: in modalità scatto
         # le loro richieste fallirebbero.
@@ -1182,6 +1184,10 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str, object)
     def on_remote_entered(self, mode: str, area: object) -> None:
         self._remote_entered = True
+        if self._live_worker is not None and not (self._remote_leaving or self._closing):
+            # arm() è partito prima che il rientro fosse eseguito: se il rientro ha
+            # impiegato più di 3 s, la sentinella scatterebbe a vuoto. Si riparte da qui.
+            self._live_worker.arm()
         logging.getLogger("olympus_connect.remote").debug("area di tocco ricevuta: %r", area)
         self._remote_panel.set_take_mode(mode)
         self._remote_panel.set_busy(False)
@@ -1207,6 +1213,8 @@ class MainWindow(QMainWindow):
             self._remote_view.set_frame(immagine)
 
     MAX_AUTO_REENTRIES = 2      # rientri automatici di fila, senza un fotogramma in mezzo
+    _LIVE_STUCK = ("Il live non riparte. La sequenza è ferma finché non torna: premi Riprova, "
+                   "o se non riparte fermala.")
 
     _LIVE_DOWN = {
         "stalled": "Live interrotto.",
@@ -1232,12 +1240,17 @@ class MainWindow(QMainWindow):
         self._live_down = kind
         if self._shot_in_flight:
             return
-        if self._sequence.is_running() and self._auto_reentries < self.MAX_AUTO_REENTRIES:
-            # Nessuno è lì a premere Riprova. Ma se il live non torna nemmeno
-            # dopo un paio di rientri non si insiste ogni tre secondi: resta
-            # l'avviso, e la sequenza si ferma da sola dopo tre scatti saltati.
-            self._auto_reentries += 1
-            self.on_live_retry()
+        if self._sequence.is_running():
+            if not self._remote_entered:
+                return                  # un rientro è già in corso: si aspetta il suo esito
+            if self._auto_reentries < self.MAX_AUTO_REENTRIES:
+                # Nessuno è lì a premere Riprova. Ma se il live non torna nemmeno
+                # dopo un paio di rientri non si insiste ogni tre secondi: resta
+                # l'avviso, e la sequenza si ferma da sola dopo tre scatti saltati.
+                self._auto_reentries += 1
+                self.on_live_retry()
+                return
+            self._remote_view.show_message(self._LIVE_STUCK, retry=True)
             return
         self._remote_view.show_message(self._LIVE_DOWN[kind], retry=True)
 
@@ -1404,6 +1417,12 @@ class MainWindow(QMainWindow):
             self._remote_view.show_message(message, retry=True)
         if era_scatto:
             self._sequence.shot_done(False)
+            # Il live si è perso durante lo scatto, e lo scatto è fallito: la
+            # sentinella ha già avvisato (una volta sola), quindi il rientro
+            # automatico si chiede qui. Altrimenti la sequenza si fermerebbe.
+            if (self._sequence.is_running() and self._live_down is not None
+                    and self._remote_active and not self._remote_leaving and not self._closing):
+                self._live_lost(self._live_down)
 
     @pyqtSlot(object)
     def on_remote_props(self, props: object) -> None:
@@ -1671,6 +1690,9 @@ class MainWindow(QMainWindow):
         if (self._sequence.may_pause_live() and self._remote_active
                 and not self._remote_leaving and not self._closing
                 and not self._shot_in_flight and self._live_worker is not None):
+            # Dopo una posa lunga il live non riparte con la sola riaccensione: alla
+            # sveglia serve subito il rientro, senza aspettare 3 s per scoprirlo.
+            self._pause_after_stall = self._live_restart_pending or self._live_down is not None
             self._live_restart_pending = False
             self._live_down = None
             self._live_paused = True        # da subito: nessuno scatto finché il live non torna
@@ -1688,6 +1710,10 @@ class MainWindow(QMainWindow):
         if (not self._remote_active or self._remote_leaving or self._closing
                 or self._live_worker is None):
             return
+        if self._pause_after_stall:
+            self._pause_after_stall = False
+            self._reenter_after_pause()
+            return
         self._live_waking = True
         self._remote_view.show_message("Il live riparte…")
         self._live_worker.arm()             # riapre il passaggio nel firewall, riarma la sentinella
@@ -1699,10 +1725,11 @@ class MainWindow(QMainWindow):
             self._reenter_after_pause()
 
     def _reenter_after_pause(self) -> None:
-        """La riaccensione semplice non è bastata: rientro completo in modalità scatto."""
+        """La riaccensione semplice non è bastata: rientro completo in modalità
+        scatto, con lo stesso limite dei rientri automatici."""
         self._live_paused = False
         self._live_waking = False
-        self.on_live_retry()
+        self._live_lost("no_signal")
 
     def exit_remote(self, view: str) -> None:
         if not self._remote_active or self._remote_leaving:
@@ -1749,6 +1776,7 @@ class MainWindow(QMainWindow):
         self._props_pending = 0
         self._live_paused = False
         self._live_waking = False
+        self._pause_after_stall = False
         residuo = self._sequence.abort()        # di norma è già ferma
         if residuo is not None and self._sequence_result is None:
             self._sequence_result = residuo
