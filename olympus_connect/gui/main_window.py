@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.camprops import shot_busy_seconds
-from ..core.downloader import JobState
+from ..core.downloader import JobState, plan_flat
 from ..core.errors import NetworkUnavailable, OlympusError
 from ..core.model import MediaKind
 from ..core.network import CameraNetwork
@@ -34,19 +34,22 @@ from ..core.power import SleepInhibitor
 from ..core.protocol import LIVE_QUALITY, OlympusClient
 from ..core.sequence import (
     DEFAULT_DURATION, DEFAULT_INTERVAL, SNAPSHOT_SETTLE, SequencePlan, SequenceResult,
+    folder_name, sequence_files,
 )
 from ..core.stats import format_duration, format_rate, format_size
-from ..core.timelapse import DEFAULT_FRAME_RATE, FRAME_RATES
+from ..core.timelapse import (
+    DEFAULT_FRAME_RATE, DEFAULT_RESOLUTION, FRAME_RATES, RESOLUTIONS, VIDEO_NAME, find_ffmpeg,
+)
 from . import icons, theme
 from .grid import MediaFilter, MediaGrid, MediaListModel, MediaTable
 from .panels import CollapsiblePanel, SectionLabel, Separator
 from .liveview import LiveViewWorker
 from .preview import PreviewView
 from .remote import RemotePanel, RemoteView
-from .sequence import SequenceController
+from .sequence import SequenceController, SequenceEndDialog, SequenceJob
 from .shot import ShotSection, label_column_width
 from .workers import (
-    DownloadWorker, ListWorker, PreviewWorker, RemoteWorker, ThumbWorker,
+    DownloadWorker, ListWorker, PreviewWorker, RemoteWorker, ThumbWorker, TimelapseWorker,
     describe_error,
 )
 
@@ -169,6 +172,12 @@ class MainWindow(QMainWindow):
         self._live_paused = False       # il live è spento di proposito fra due scatti
         self._live_waking = False       # è partita la riaccensione, si aspetta il primo fotogramma
         self._auto_reentries = 0        # rientri automatici di fila durante una sequenza
+        # Fine sequenza: finestra di scelta, scarico nella cartella dedicata, video.
+        self._sequence_known: set[str] = set()     # file noti prima di entrare nel telecomando
+        self._sequence_dialog: SequenceEndDialog | None = None
+        self._sequence_offer: tuple | None = None  # (foto, risultato) mentre la finestra è aperta
+        self._sequence_job: SequenceJob | None = None
+        self._timelapse_worker: TimelapseWorker | None = None
 
         self._model = MediaListModel()
         self._grid = MediaGrid(self._model)
@@ -715,6 +724,8 @@ class MainWindow(QMainWindow):
         if self.current_view() == VIEW_GRID:
             self._grid.request_visible_thumbnails()
 
+        self._offer_sequence(jobs)
+
     def _refresh_counts(self) -> None:
         conteggi = self._model.counts_by_kind()
         totale_file = totale_byte = 0
@@ -928,7 +939,18 @@ class MainWindow(QMainWindow):
         if not jobs:
             self.statusBar().showMessage("Nessun file selezionato.", 4000)
             return
+        if self._timelapse_worker is not None:
+            # La barra di stato e il suo Annulla servono al montaggio in corso.
+            self.statusBar().showMessage("Aspetta che il video sia montato.", 4000)
+            return
+        self._start_download(jobs)
 
+    def _start_download(self, jobs: list, mark_model: bool = True) -> None:
+        """Avvia un trasferimento. `mark_model=False` per lo scarico di una
+        sequenza: va in un'altra cartella, e i file dell'elenco non diventano
+        «già scaricati» per questo."""
+        if mark_model:
+            self._sequence_job = None       # uno scarico ordinario: nessun video da montare dopo
         # Miniature e anteprima sospese: il server della fotocamera è un
         # microcontrollore e due trasferimenti in volo lo degradano.
         self._suspend_thumbnails(True)
@@ -937,7 +959,8 @@ class MainWindow(QMainWindow):
         worker.file_progress.connect(self._update_file_bar)
         worker.total_progress.connect(self._update_total_bar)
         worker.stats_changed.connect(self.on_stats)
-        worker.file_completed.connect(self.on_file_completed)
+        if mark_model:
+            worker.file_completed.connect(self.on_file_completed)
         worker.file_failed.connect(
             lambda name, msg: self.statusBar().showMessage(f"{name}: {msg}"))
         worker.paused.connect(self.on_paused)
@@ -983,6 +1006,10 @@ class MainWindow(QMainWindow):
         self._set_progress(self._total_bar, written, total)
 
     def on_cancel(self) -> None:
+        if self._timelapse_worker is not None:
+            self._timelapse_worker.cancel()         # il resto lo fa on_timelapse_cancelled
+            self._cancel_button.setEnabled(False)
+            return
         if self._download_worker is not None:
             self._download_worker.cancel()
         self._show_transfer(True, con_riprova=True)
@@ -1024,6 +1051,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Download completato.")
         self._downloading = False
         self._update_remote_button()
+        lavoro, self._sequence_job = self._sequence_job, None
+        if lavoro is not None:
+            # Un'altra cartella: l'elenco non cambia, e il suo messaggio di stato
+            # coprirebbe quello della sequenza.
+            self._after_sequence_download(lavoro)
+            return
         self.on_refresh()
 
     # ------------------------------------------------------------------
@@ -1069,6 +1102,7 @@ class MainWindow(QMainWindow):
         self._live_down = None
         self._remote_leaving = False       # mai ereditato da un'uscita precedente
         self._remote_props = {}
+        self._sequence_known = self._model.camera_paths()
         self._props_pending = 0
         self._snapshot_timer.stop()
         self._sequence_preparing = False
@@ -1521,6 +1555,112 @@ class MainWindow(QMainWindow):
         if self._remote_active and not self._remote_leaving and not self._closing:
             self.exit_remote(self._remote_exit_view)
 
+    def _offer_sequence(self, jobs: list) -> None:
+        """Dopo l'elenco che segue una sequenza: quali foto ha fatto, e cosa farne."""
+        if self._sequence_result is None or self._sequence_dialog is not None:
+            return
+        risultato, self._sequence_result = self._sequence_result, None
+        file = [j.media for j in jobs]
+        riserva = self._sequence_before is None
+        prima = self._sequence_known if riserva else self._sequence_before
+        self._sequence_before = None
+        nuovi = [m for m in file if m.camera_path not in prima]
+        foto = sequence_files(prima, file)
+        risoluzione = str(self._settings.value("sequence/resolution", DEFAULT_RESOLUTION))
+        dialog = SequenceEndDialog(
+            photos=len(foto), skipped=risultato.skipped, aborted=risultato.aborted,
+            only_raw=not foto and any(m.kind is MediaKind.RAW for m in nuovi),
+            since_remote_entry=riserva, ffmpeg=find_ffmpeg() is not None,
+            resolution=risoluzione, fps=self._sequence_fps(), parent=self)
+        self._sequence_dialog = dialog
+        self._sequence_offer = (foto, risultato)
+        dialog.finished.connect(self._on_sequence_dialog)
+        dialog.open()                       # non blocca: i worker continuano a parlare
+
+    def _on_sequence_dialog(self, _codice: int) -> None:
+        dialog, self._sequence_dialog = self._sequence_dialog, None
+        offerta, self._sequence_offer = self._sequence_offer, None
+        if dialog is None or offerta is None:
+            return
+        foto, risultato = offerta
+        scelta = dialog.choice()
+        dialog.deleteLater()
+        if self._closing:
+            return
+        if not scelta.download or not foto:
+            self.statusBar().showMessage("Le foto della sequenza restano sulla scheda.")
+            return
+        if self._downloading or self._timelapse_worker is not None:
+            # Non succede per come è fatta l'interfaccia, ma due trasferimenti
+            # insieme si pesterebbero i piedi nella barra di stato.
+            self.statusBar().showMessage(
+                "Un trasferimento è in corso: le foto della sequenza restano sulla scheda.")
+            return
+        self._settings.setValue("sequence/fps", scelta.fps)
+        self._settings.setValue("sequence/resolution", scelta.resolution)
+        self._update_sequence_summary()
+        radice = Path(self.dest_root())
+        try:
+            cartella = radice / folder_name(risultato.started_at,
+                                            lambda n: (radice / n).exists())
+            lavori = plan_flat(foto, cartella)      # stesso ordine delle foto: quello di scatto
+        except OSError as exc:
+            # un'eccezione che esce da uno slot chiude il programma
+            self.statusBar().showMessage(f"Cartella della sequenza non raggiungibile: {exc}")
+            return
+        self._sequence_job = SequenceJob(cartella, [lavoro.dest for lavoro in lavori],
+                                         scelta.video, scelta.resolution, scelta.fps)
+        self._start_download(lavori, mark_model=False)
+
+    def _after_sequence_download(self, lavoro: SequenceJob) -> None:
+        presenti = [p for p in lavoro.frames if p.exists()]
+        if not lavoro.video:
+            self.statusBar().showMessage(
+                f"Sequenza scaricata: {len(presenti)} foto in {lavoro.folder}")
+            return
+        if len(presenti) < 2:
+            self.statusBar().showMessage(
+                "Sequenza scaricata, ma per il video servono almeno due foto.")
+            return
+        worker = TimelapseWorker(presenti, lavoro.folder / VIDEO_NAME, lavoro.fps,
+                                 RESOLUTIONS[lavoro.resolution])
+        worker.progress.connect(self.on_timelapse_progress)
+        worker.done.connect(self.on_timelapse_done)
+        worker.failed.connect(self.on_timelapse_failed)
+        worker.cancelled.connect(self.on_timelapse_cancelled)
+        self._timelapse_worker = worker
+        self._show_transfer(True)
+        self._file_label.setText("Montaggio del video…")
+        self._rate_label.setText("")
+        self._file_bar.setValue(0)
+        self._total_bar.setValue(0)
+        self.statusBar().showMessage("Sequenza scaricata: monto il video…")
+        self._start_on_thread(worker, worker.run)
+
+    @pyqtSlot(int, int)
+    def on_timelapse_progress(self, scritti: int, totale: int) -> None:
+        self._file_label.setText(f"Montaggio del video: {scritti} di {totale}")
+        self._set_progress(self._total_bar, scritti, totale)
+
+    def _timelapse_over(self, messaggio: str) -> None:
+        self._timelapse_worker = None
+        self._file_label.setText("")
+        self._total_bar.setValue(0)
+        self._show_transfer(False)
+        self.statusBar().showMessage(messaggio)
+
+    @pyqtSlot(str)
+    def on_timelapse_done(self, percorso: str) -> None:
+        self._timelapse_over(f"Video pronto: {percorso}")
+
+    @pyqtSlot(str)
+    def on_timelapse_failed(self, messaggio: str) -> None:
+        self._timelapse_over(messaggio)
+
+    @pyqtSlot()
+    def on_timelapse_cancelled(self) -> None:
+        self._timelapse_over("Montaggio annullato: le foto restano nella cartella.")
+
     def _after_shot_review(self) -> None:
         """Fine dell'anteprima di uno scatto (o subito, se l'anteprima non c'è).
 
@@ -1710,6 +1850,16 @@ class MainWindow(QMainWindow):
             self._remote_active = False
         if self._download_worker is not None:
             self._download_worker.cancel()     # flag atomico, sicuro fra thread
+        if self._timelapse_worker is not None:
+            self._timelapse_worker.cancel()         # thread-safe: termina ffmpeg
+        if self._sequence_dialog is not None:
+            dialog, self._sequence_dialog = self._sequence_dialog, None
+            self._sequence_offer = None
+            try:
+                dialog.finished.disconnect(self._on_sequence_dialog)
+            except TypeError:
+                pass
+            dialog.close()
 
         # Prima si fermano i thread, poi si zittiscono i worker. L'ordine
         # inverso e' una corsa critica: blockSignals dal thread della GUI
@@ -1721,7 +1871,7 @@ class MainWindow(QMainWindow):
         self._threads.clear()
 
         for worker in (self._list_worker, self._thumb_worker,
-                       self._preview_worker, self._download_worker):
+                       self._preview_worker, self._download_worker, self._timelapse_worker):
             if worker is not None:
                 worker.blockSignals(True)
         super().closeEvent(event)

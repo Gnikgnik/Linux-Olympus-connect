@@ -1938,3 +1938,212 @@ def test_automatic_reentries_stop_after_two_and_leave_the_retry_button(seq_win, 
     assert win._sequence.is_running()
     _fotogramma(win)                                        # il live torna: il conto riparte
     assert win._auto_reentries == 0
+
+
+# --- sequenze: fine, scarico, video --------------------------------------------------------
+
+from olympus_connect.core.downloader import Outcome  # noqa: E402
+from olympus_connect.gui.sequence import SequenceEndDialog  # noqa: E402
+
+
+def _scarico_finto(client, job, on_progress=None, should_cancel=None, **kw):
+    """Al posto del trasferimento vero: scrive un JPEG valido della dimensione dichiarata."""
+    job.dest.parent.mkdir(parents=True, exist_ok=True)
+    job.dest.write_bytes(_jpeg_valido().ljust(job.media.size, b"\0")[:max(job.media.size, 1)])
+    if on_progress:
+        on_progress(job.media.size, job.media.size)
+    return Outcome.DONE
+
+
+class _FintoMontaggio(QObject):
+    """Al posto di TimelapseWorker: registra gli argomenti e aspetta il test."""
+    progress = pyqtSignal(int, int)
+    done = pyqtSignal(str)
+    failed = pyqtSignal(str)
+    cancelled = pyqtSignal()
+    istanze: list = []
+
+    def __init__(self, files, out, fps, size, ffmpeg=None):
+        super().__init__()
+        self.files, self.out, self.fps, self.size = list(files), out, fps, size
+        self.annullato = False
+        _FintoMontaggio.istanze.append(self)
+
+    def run(self):
+        pass
+
+    def cancel(self):
+        self.annullato = True
+
+
+@pytest.fixture
+def fine_win(seq_win, monkeypatch):
+    _FintoMontaggio.istanze = []
+    monkeypatch.setattr("olympus_connect.gui.workers.download", _scarico_finto)
+    monkeypatch.setattr("olympus_connect.gui.main_window.TimelapseWorker", _FintoMontaggio)
+    monkeypatch.setattr("olympus_connect.gui.main_window.find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    return seq_win
+
+
+def _sequenza_fino_alla_finestra(win, qapp, scatti=2):
+    win.on_sequence_start(1, scatti)                       # uno scatto al secondo, `scatti` in tutto
+    assert _attendi(qapp, lambda: win._sequence_dialog is not None, 10.0), \
+        "la finestra di fine sequenza non è comparsa"
+    return win._sequence_dialog
+
+
+def _cartelle_sequenza(tmp_path):
+    return sorted(p for p in (tmp_path / "dest").glob("Sequenza *") if p.is_dir())
+
+
+def test_after_the_sequence_the_dialog_offers_its_jpegs(fine_win, qapp):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    assert isinstance(dialog, SequenceEndDialog)
+    assert dialog.message().startswith("Sequenza finita: 2 foto.")
+    assert "dall'ingresso nel telecomando" not in dialog.message()
+    assert not win._remote_active and win._sequence_result is None
+
+
+def test_not_now_leaves_the_photos_on_the_card(fine_win, qapp, tmp_path):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._later.click()
+    assert _attendi(qapp, lambda: win._sequence_dialog is None)
+    assert win.statusBar().currentMessage() == "Le foto della sequenza restano sulla scheda."
+    assert _cartelle_sequenza(tmp_path) == [] and win._sequence_job is None
+
+
+def test_download_puts_only_the_jpegs_in_a_dedicated_folder(fine_win, qapp, tmp_path):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._video.setChecked(False)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: win.statusBar().currentMessage().startswith("Sequenza scaricata: 2 foto"), 5.0)
+    [cartella] = _cartelle_sequenza(tmp_path)
+    assert sorted(p.name for p in cartella.iterdir()) == ["P0000002.JPG", "P0000003.JPG"]
+    assert win._sequence_job is None and _FintoMontaggio.istanze == []
+    assert not (tmp_path / "dest" / "2026").exists()       # niente sottocartelle per data
+    # le foto sono andate in un'altra cartella: nell'elenco non diventano «già scaricate»
+    stati = {j.media.name: j.state for j in win._model._all}
+    assert stati["P0000002.JPG"] is not JobState.PRESENT
+    assert stati["P0000003.JPG"] is not JobState.PRESENT
+
+
+def test_download_then_video_with_the_chosen_options(fine_win, qapp, tmp_path, settings):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._resolution.setCurrentText("4K")
+    dialog._fps.setCurrentIndex(dialog._fps.findData(30))
+    dialog._download.click()
+    assert _attendi(qapp, lambda: len(_FintoMontaggio.istanze) == 1, 5.0), "il montaggio non parte"
+    montaggio = _FintoMontaggio.istanze[0]
+    [cartella] = _cartelle_sequenza(tmp_path)
+    assert montaggio.files == [cartella / "P0000002.JPG", cartella / "P0000003.JPG"]
+    assert montaggio.out == cartella / "timelapse.mp4"
+    assert (montaggio.fps, montaggio.size) == (30, (3840, 2160))
+    assert int(settings.value("sequence/fps")) == 30 and settings.value("sequence/resolution") == "4K"
+    montaggio.progress.emit(1, 2)
+    assert _attendi(qapp, lambda: win._file_label.text() == "Montaggio del video: 1 di 2")
+    assert not win._cancel_button.isHidden()
+    montaggio.done.emit(str(montaggio.out))
+    assert _attendi(qapp, lambda: win.statusBar().currentMessage() == f"Video pronto: {montaggio.out}")
+    assert win._timelapse_worker is None and win._cancel_button.isHidden()
+
+
+def test_cancel_during_the_video_stops_ffmpeg_and_keeps_the_photos(fine_win, qapp, tmp_path):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: len(_FintoMontaggio.istanze) == 1, 5.0)
+    montaggio = _FintoMontaggio.istanze[0]
+    win._cancel_button.click()
+    assert montaggio.annullato
+    montaggio.cancelled.emit()
+    assert _attendi(qapp, lambda: win.statusBar().currentMessage() == (
+        "Montaggio annullato: le foto restano nella cartella."))
+    [cartella] = _cartelle_sequenza(tmp_path)
+    assert len(list(cartella.glob("*.JPG"))) == 2 and win._timelapse_worker is None
+
+
+def test_a_failed_video_says_why(fine_win, qapp):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: len(_FintoMontaggio.istanze) == 1, 5.0)
+    _FintoMontaggio.istanze[0].failed.emit("Il montaggio del video non è riuscito: codec rotto")
+    assert _attendi(qapp, lambda: win.statusBar().currentMessage() == (
+        "Il montaggio del video non è riuscito: codec rotto"))
+    assert win._timelapse_worker is None
+
+
+def test_a_manual_shot_before_the_start_is_not_part_of_the_sequence(fine_win, qapp, tmp_path):
+    win = fine_win
+    win._remote_panel._shoot.click()
+    assert _attendi(qapp, lambda: _scatti() == 1 and not win._shot_in_flight)
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    assert dialog.message().startswith("Sequenza finita: 2 foto.")
+    dialog._video.setChecked(False)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: len(_cartelle_sequenza(tmp_path)) == 1, 5.0)
+    assert _attendi(qapp, lambda: win._sequence_job is None, 5.0)
+    [cartella] = _cartelle_sequenza(tmp_path)
+    assert sorted(p.name for p in cartella.iterdir()) == ["P0000003.JPG", "P0000004.JPG"]
+
+
+def test_without_the_snapshot_every_photo_since_entering_is_offered(fine_win, qapp):
+    win = fine_win
+    # come se l'elenco fosse stato letto prima di entrare nel telecomando
+    win._sequence_known = {m.camera_path for m in _SequenceStubClient.file}
+    _SequenceStubClient.istantanea_rotta = True
+    win._remote_panel._shoot.click()
+    assert _attendi(qapp, lambda: _scatti() == 1 and not win._shot_in_flight)
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    assert dialog.message().startswith("Sequenza finita: 3 foto.")
+    assert "foto nuove dall'ingresso nel telecomando" in dialog.message()
+
+
+def test_a_raw_only_camera_gets_the_explanation(fine_win, qapp, monkeypatch):
+    win = fine_win
+
+    def solo_raw(self, read_timeout=None):
+        _RecordingClient.chiamate.append(("take_picture",))
+        n = len(_SequenceStubClient.file) + 1
+        _SequenceStubClient.file = _SequenceStubClient.file + [
+            _media_seq(f"R{n:07d}.ORF", MediaKind.RAW)]
+    monkeypatch.setattr(_SequenceStubClient, "take_picture", solo_raw)
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    assert "La fotocamera ha salvato solo RAW" in dialog.message()
+    dialog._close.click()
+    assert _attendi(qapp, lambda: win._sequence_dialog is None)
+
+
+def test_a_failed_listing_keeps_the_sequence_for_the_next_one(fine_win, qapp):
+    win = fine_win
+    _SequenceStubClient.elenco_rotto = 1
+    win.on_sequence_start(1, 2)
+    assert _attendi(qapp, lambda: not win._remote_active and not win._listing, 10.0)
+    assert win._sequence_dialog is None and win._sequence_result is not None
+    win.on_refresh()                                        # come il pulsante Aggiorna
+    assert _attendi(qapp, lambda: win._sequence_dialog is not None, 5.0)
+    assert win._sequence_dialog.message().startswith("Sequenza finita: 2 foto.")
+
+
+def test_an_ordinary_download_forgets_a_pending_sequence_job(fine_win, qapp, tmp_path):
+    from olympus_connect.gui.sequence import SequenceJob
+    win = fine_win
+    win._sequence_job = SequenceJob(tmp_path / "x", [], True, "Full HD", 25)
+    win._start_download([])
+    assert _attendi(qapp, lambda: not win._downloading)
+    assert win._sequence_job is None and _FintoMontaggio.istanze == []
+
+
+def test_the_grid_download_still_marks_files_as_present(fine_win, qapp, tmp_path):
+    win = fine_win
+    win.exit_remote("griglia")
+    assert _attendi(qapp, lambda: not win._remote_active and win._model.rowCount() == 2, 5.0)
+    lavori = win._model._all
+    win._start_download(list(lavori))
+    assert _attendi(qapp, lambda: not win._downloading, 5.0)
+    assert (tmp_path / "dest" / "2026" / "2026-11-11" / "P0000001.JPG").exists()
+    assert _attendi(qapp, lambda: all(j.state is JobState.PRESENT for j in win._model._all), 5.0)
