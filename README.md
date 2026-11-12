@@ -40,6 +40,7 @@ L'applicazione ufficiale vede **2 file su 1161**. Chi scatta in RAW non ha nessu
 | Dati di scatto prima di scaricare | ✅ tempo, diaframma, ISO, focale, obiettivo e altri, da `get_exif.cgi` (verificato sui RAW; JPEG e video da verificare) |
 | Telecomando: live, messa a fuoco col tocco, scatto, video | ✅ live a 1024×768 e 30 fotogrammi/s, nessuna regola del firewall |
 | Impostazioni dal PC: modalità, tempo, diaframma, ISO, compensazione, bilanciamento, scatto, filtri | ✅ diaframma limitato all'obiettivo e allo zoom; pose lunghe fino a 60" con conto alla rovescia |
+| Sequenze di scatti a intervalli (intervallometro), scarico dei JPEG in una cartella dedicata e video timelapse | da verificare sul campo: i comandi sono misurati (ciclo di scatto 1 s, live che si spegne e si riaccende in 0,3 s), la funzione nell'app non ancora |
 | Richieste `Range` (ripresa) | ❌ **non supportate**: risponde `200` senza `Content-Range` |
 | `set_timeout.cgi` (keep-alive) | ❌ dichiarato ma risponde `520` / `errorcode 1006` |
 | `get_unusedcapacity.cgi` | ❌ restituisce `0xFFFFFFFF`, sentinella di «non disponibile» |
@@ -63,6 +64,8 @@ Servono Python 3.12 o successivo, PyQt6 e `requests`. Su Arch e derivate:
 ```bash
 sudo pacman -S --needed python-pyqt6 python-requests
 ```
+
+Facoltativo: `ffmpeg`, che serve solo per montare il video di una sequenza (`sudo pacman -S ffmpeg`). Senza, il resto funziona e le foto della sequenza si scaricano lo stesso.
 
 Poi, nella cartella del progetto:
 
@@ -108,6 +111,8 @@ I file finiscono in `~/Immagini/Olympus/ANNO/ANNO-MM-GG/NOME.EXT`, con la data d
 Con la fotocamera collegata, il pulsante **Telecomando** nella barra in alto mostra il live al centro della finestra. Un clic sull'immagine mette a fuoco in quel punto; **Scatta** (o la barra spaziatrice) scatta e mostra la foto per due secondi; **Registra** (o il tasto R) avvia e ferma un video. Tornando a Miniature o a Elenco la fotocamera torna in riproduzione e l'elenco si aggiorna con i file nuovi. Solo se il live non arriva (il messaggio «Nessuna immagine dalla fotocamera») il firewall sta bloccando i pacchetti UDP della fotocamera: consentili con `sudo ufw allow in from 192.168.0.10 proto udp`. Per la diagnostica sul campo, avviando con `OLYMPUS_DEBUG=1` il programma scrive su stderr il punto di messa a fuoco e le risposte della fotocamera.
 
 Sotto Scatta e Registra, la sezione **Impostazioni** mostra modalità, tempo, diaframma, ISO, compensazione, bilanciamento e modalità di scatto (in ART anche filtro e variante, in Scene la scena). Le frecce, la rotella del mouse o un clic sul valore li cambiano; il comando parte un attimo dopo l'ultimo passo. Le righe che la modalità lascia alla fotocamera sono attenuate («automatico»). Il diaframma offre solo i valori possibili con l'obiettivo e lo zoom del momento. Con le pose lunghe l'app aspetta la posa più la riduzione rumore (con 60" circa due minuti) e mostra il conto alla rovescia; nel frattempo il live si ferma.
+
+Sotto le impostazioni, la sezione **Sequenza** fa da intervallometro: si scelgono l'intervallo (da 2 secondi a 30 minuti) e la durata (da 5 minuti a 12 ore) e si preme **Avvia sequenza**. Durante la sequenza gli altri comandi del telecomando sono spenti, e **Ferma sequenza** la interrompe dopo lo scatto in corso. Con intervalli da un minuto in su il live si spegne fra uno scatto e l'altro, per risparmiare la batteria, e si riaccende poco prima dello scatto successivo. Finché la sequenza è in corso il PC non va in sospensione. Alla fine il programma esce dal telecomando e chiede se scaricare i JPEG della sequenza in una cartella `Sequenza AAAA-MM-GG HH.MM` dentro la destinazione, e se montarli in un video `timelapse.mp4` (Full HD o 4K; 24, 25 o 30 fotogrammi al secondo). I RAW restano sulla scheda.
 
 Non serve aprire porte nel firewall: prima di avviare il live il PC manda un pacchetto alla fotocamera, e il firewall accetta le risposte. Se il live non arriva comunque, l'app lo dice e suggerisce la regola da aggiungere.
 
@@ -157,7 +162,7 @@ Fuori scope anche la sincronizzazione dell'orologio e il log GPS, entrambi raggi
 .venv/bin/python -m pytest
 ```
 
-590 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
+777 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
 
 Il test più importante è `test_download_recovers_from_drop_at_half_without_range`: un server locale chiude la connessione a metà del corpo **e** ignora il `Range`, cioè riproduce esattamente il comportamento di questa fotocamera. Verifica che il recupero produca un file corretto invece di un file corrotto.
 
@@ -174,6 +179,9 @@ olympus_connect/
 │   ├── exif.py         dati di scatto dall'EXIF standard, in italiano
 │   ├── liveview.py     pacchetti RTP del live, ricomposizione dei fotogrammi
 │   ├── camprops.py     impostazioni della fotocamera, testo italiano e regole
+│   ├── sequence.py     piano e automa delle sequenze, foto della sequenza, nome della cartella
+│   ├── timelapse.py    montaggio del video di una sequenza con ffmpeg
+│   ├── power.py        tiene sveglio il PC durante una sequenza (systemd-inhibit)
 │   └── errors.py
 ├── gui/             worker su QThread, il core non sa che Qt esista
 │   ├── workers.py      ListWorker, ThumbWorker, PreviewWorker, DownloadWorker
@@ -183,12 +191,14 @@ olympus_connect/
 │   ├── liveview.py     ricezione del live su un thread
 │   ├── remote.py       vista del live e comandi del telecomando
 │   ├── props.py        sezione Impostazioni del telecomando
+│   ├── sequence.py     sezione Sequenza, finestra di fine sequenza, regista degli scatti
 │   ├── panels.py       pannelli laterali richiudibili e animati
 │   ├── theme.py        palette scura e foglio di stile
 │   ├── icons.py        icone disegnate a tracciato, un solo peso
 │   └── main_window.py
 └── resources/       icona dell'applicazione, dettagliata e semplificata
 diag.py              strumento diagnostico, eseguibile da solo
+tools/prova_sequenza.py  prova sul campo delle sequenze, scrive un referto
 install-desktop.sh   voce di menu, icone e comando nella home
 ```
 

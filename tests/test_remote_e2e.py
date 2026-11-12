@@ -19,6 +19,7 @@ from PyQt6.QtGui import QImage
 from tests.live_helpers import frame_packets, padded_jpeg
 from olympus_connect.core.network import Diagnosis, Rung
 from olympus_connect.core.protocol import OlympusClient
+from olympus_connect.core.timelapse import find_ffmpeg
 from olympus_connect.gui.liveview import LiveViewWorker
 from olympus_connect.gui.main_window import MainWindow
 
@@ -55,12 +56,15 @@ def _attendi(qapp, condizione, secondi=10.0):
 
 @pytest.fixture
 def camera(qapp):
-    stato = {"richieste": [], "invio": None, "modo": "play", "valori": {}}
+    stato = {"richieste": [], "invio": None, "modo": "play", "valori": {},
+             "scatti": 0, "nuovi": [], "elenchi": []}
     mittente = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     mittente.bind(("127.0.0.1", 0))
     fermo = threading.Event()
     fotogramma = padded_jpeg(_jpeg(1024, 768), 60000)
     revisione = _jpeg(320, 240)
+    foto = _jpeg(640, 480)                      # 4:3, come la fotocamera
+    grezzo = b"ORF finto " * 50
 
     def trasmetti(destinazione):
         seq = 1
@@ -106,8 +110,17 @@ def camera(qapp):
                 stato["modo"] = qs.get("mode")
                 return self._send(b"")
             if nome == "get_imglist.cgi":
-                f = "imglist_dcim.csv" if qs["DIR"] == "/DCIM" else "imglist_dcim_100olymp.csv"
-                return self._send((FIXTURES / f).read_bytes(), "text/plain")
+                if qs["DIR"] == "/DCIM":
+                    return self._send((FIXTURES / "imglist_dcim.csv").read_bytes(), "text/plain")
+                stato["elenchi"].append(stato["modo"])
+                righe = (FIXTURES / "imglist_dcim_100olymp.csv").read_bytes()
+                for nome_file, contenuto in stato["nuovi"]:
+                    righe += f"/DCIM/100OLYMP,{nome_file},{len(contenuto)},0,23626,28090\r\n".encode()
+                return self._send(righe, "text/plain")
+            if nome.startswith("DCIM/"):
+                for nome_file, contenuto in stato["nuovi"]:
+                    if nome == f"DCIM/100OLYMP/{nome_file}":
+                        return self._send(contenuto, "application/octet-stream")
             if nome == "get_camprop.cgi":
                 if qs.get("propname") == "takemode":
                     return self._send((FIXTURES / "remote" / "camprop_takemode.xml").read_bytes())
@@ -127,6 +140,9 @@ def camera(qapp):
                 if qs.get("com") == "assignafframe":
                     return self._send((FIXTURES / "remote" / "af.txt").read_bytes())
                 if qs.get("com") == "starttake":
+                    stato["scatti"] += 1
+                    n = stato["scatti"]
+                    stato["nuovi"] += [(f"PB11{n:04d}.JPG", foto), (f"PB11{n:04d}.ORF", grezzo)]
                     return self._send(b'<?xml version="1.0"?><response><take>ok</take></response>')
                 return self._send(b"")
             self.send_response(404)
@@ -226,6 +242,66 @@ def test_a_setting_changed_from_the_pc_reaches_the_camera(qapp, camera, tmp_path
             "il pannello non ha riletto il nuovo valore"
         finestra._view_grid.click()
         assert _attendi(qapp, lambda: not finestra._remote_active)
+    finally:
+        finestra.close()
+        qapp.processEvents()
+
+
+class _Blocco:
+    """Al posto di SleepInhibitor: un test non deve bloccare la sospensione del PC."""
+
+    def start(self, seconds):
+        return True
+
+    def stop(self):
+        pass
+
+
+def test_a_sequence_ends_in_a_folder_with_its_jpegs_and_a_video(qapp, camera, tmp_path, monkeypatch):
+    if find_ffmpeg() is None:
+        pytest.skip("ffmpeg non installato")
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 0.0)
+    # Se il test fallisce a sequenza in corso, la chiusura chiederebbe conferma
+    # con una finestra modale e il test resterebbe appeso invece di fallire.
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
+    impostazioni = QSettings(str(tmp_path / "e2e.ini"), QSettings.Format.IniFormat)
+    impostazioni.setValue("dest_root", str(tmp_path / "dest"))
+    finestra = MainWindow(
+        client_factory=lambda: OlympusClient(base_url=camera["base_url"]),
+        network_factory=_Net,
+        settings=impostazioni,
+        live_factory=lambda: LiveViewWorker(camera=camera["udp"], bind_host="127.0.0.1"),
+        inhibitor_factory=_Blocco,
+    )
+    try:
+        finestra.resize(1366, 740)
+        finestra.show()
+        finestra.on_refresh()
+        assert _attendi(qapp, lambda: finestra._model.rowCount() == 1161), "elenco non arrivato"
+        assert _attendi(qapp, lambda: finestra._view_remote.isEnabled())
+        finestra._view_remote.click()
+        assert _attendi(qapp, finestra._remote_view.has_frame), "il live non è arrivato"
+        assert _attendi(qapp, lambda: finestra._remote_panel.props.row("isospeedvalue") is not None)
+
+        finestra.on_sequence_start(1, 3)                 # tre scatti: a 0, 1 e 2 secondi
+        assert _attendi(qapp, lambda: finestra._sequence_dialog is not None, 30.0), \
+            "la finestra di fine sequenza non è comparsa"
+        assert camera["scatti"] == 3
+        assert "rec" in camera["elenchi"], "l'istantanea non è stata presa in modalità scatto"
+        assert camera["modo"] == "play", "a fine sequenza la fotocamera non è tornata in riproduzione"
+        dialog = finestra._sequence_dialog
+        assert dialog.message().startswith("Sequenza finita: 3 foto.")
+
+        dialog._download.click()
+        cartelle = lambda: [p for p in (tmp_path / "dest").glob("Sequenza *") if p.is_dir()]  # noqa: E731
+        assert _attendi(qapp, lambda: len(cartelle()) == 1, 20.0), "la cartella non è stata creata"
+        video = cartelle()[0] / "timelapse.mp4"
+        assert _attendi(qapp, video.exists, 60.0), "il video non è stato montato"
+        assert _attendi(qapp, lambda: finestra.statusBar().currentMessage().startswith("Video pronto"))
+        nomi = sorted(p.name for p in cartelle()[0].iterdir())
+        assert nomi == ["PB110001.JPG", "PB110002.JPG", "PB110003.JPG", "timelapse.mp4"]
+        assert video.stat().st_size > 1000
+        assert not list((tmp_path / "dest").rglob("*.ORF")), "i RAW dovevano restare sulla scheda"
     finally:
         finestra.close()
         qapp.processEvents()
