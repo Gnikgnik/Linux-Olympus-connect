@@ -1533,15 +1533,15 @@ def test_the_sequence_ends_by_itself_at_the_duration(seq_win, qapp):
 
 def test_focus_clicks_and_the_shoot_shortcut_are_ignored_during_a_sequence(seq_win, qapp):
     win = seq_win
-    win.on_sequence_start(1, 300)
+    win.on_sequence_start(5, 300)
     assert _attendi(qapp, lambda: _scatti() >= 1)
     assert _attendi(qapp, lambda: not win._shot_in_flight)
     prima = _scatti()
     win.on_remote_focus_requested(10, 10)
     win._shortcut_shoot.activated.emit()
-    _attendi(qapp, lambda: False, 0.3)
+    _attendi(qapp, lambda: False, 0.5)
     assert not [c for c in _RecordingClient.chiamate if c[0] == "assign_af"]
-    assert _scatti() == prima                              # il prossimo è fra un secondo
+    assert _scatti() == prima                              # il prossimo è fra cinque secondi
 
 
 def test_a_failed_shot_is_counted_and_the_sequence_goes_on(seq_win, qapp):
@@ -1577,13 +1577,13 @@ def test_the_snapshot_waits_after_a_manual_shot(seq_win, qapp, monkeypatch):
 
 def test_stop_while_preparing_cancels_the_start(seq_win, qapp, monkeypatch):
     win = seq_win
-    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 5.0)
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 0.3)
     win._last_shot_end = _time.monotonic()
     win.on_sequence_start(1, 300)
     assert win._remote_panel.sequence.is_running()
     win.on_sequence_stop()
     assert not win._remote_panel.sequence.is_running() and not win._sequence.is_running()
-    _attendi(qapp, lambda: False, 0.3)
+    _attendi(qapp, lambda: False, 0.8)                       # ben oltre l'attesa dell'istantanea
     assert ("list_media", False) not in _RecordingClient.chiamate and _scatti() == 0
     assert win._remote_active                                # resta nel telecomando
 
@@ -1591,9 +1591,10 @@ def test_stop_while_preparing_cancels_the_start(seq_win, qapp, monkeypatch):
 def test_a_failed_snapshot_still_starts_the_sequence(seq_win, qapp):
     win = seq_win
     _SequenceStubClient.istantanea_rotta = True
+    win._sequence_before = {"un valore vecchio"}
     win.on_sequence_start(1, 300)
     assert _attendi(qapp, lambda: _scatti() >= 1)
-    assert win._sequence_before is None
+    assert win._sequence_before is None and win._sequence.is_running()
 
 
 def test_leaving_during_a_sequence_asks_first(seq_win, qapp, monkeypatch):
@@ -1643,3 +1644,126 @@ def test_the_sequence_waits_while_the_remote_is_not_ready(seq_win, qapp):
     assert _scatti() == prima
     win._remote_entered = True
     assert _attendi(qapp, lambda: _scatti() == prima + 1, 2.0)
+
+
+# --- sequenze: casi trovati dalla revisione ---------------------------------------------
+
+def test_after_a_live_reentry_every_shot_waits_for_the_mode_chosen_from_the_pc(
+        seq_win, qapp, monkeypatch):
+    """Il rientro in modalità scatto rimette la modalità della ghiera, e la
+    rimessa di quella scelta dal PC arriva solo dopo la rilettura dell'elenco:
+    uno scatto partito in mezzo sarebbe fatto nella modalità sbagliata."""
+    win = seq_win
+    modi = []
+    stato = {"primo": True}
+
+    def enter_rec_mode(self, quality):
+        _RecordingClient.chiamate.append(("enter_rec_mode", quality))
+        _PropsStubClient.valori["takemode"] = "A"            # la ghiera fisica è su A
+
+    vera_lettura = _PropsStubClient.camera_props
+
+    def camera_props(self):
+        _time.sleep(0.3)                                     # la rilettura non è immediata
+        return vera_lettura(self)
+
+    vero_scatto = _SequenceStubClient.take_picture
+
+    def take_picture(self, read_timeout=None):
+        modi.append(_PropsStubClient.valori.get("takemode"))
+        if stato["primo"]:
+            stato["primo"] = False
+            _FakeLive.istanze[-1].stalled.emit()             # posa lunga: il live si ferma
+            _time.sleep(1.5)
+        vero_scatto(self, read_timeout)
+
+    win._remote_panel.props.change("takemode", "M")
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode").confirmed_value() == "M")
+    monkeypatch.setattr(_SequenceStubClient, "enter_rec_mode", enter_rec_mode)
+    monkeypatch.setattr(_SequenceStubClient, "camera_props", camera_props)
+    monkeypatch.setattr(_SequenceStubClient, "take_picture", take_picture)
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: len(modi) >= 3, 15.0)
+    assert modi[:3] == ["M", "M", "M"], modi
+    ordine = [c[:3] for c in _RecordingClient.chiamate
+              if c[0] in ("enter_rec_mode", "set_prop", "take_picture")]
+    rientro = ordine.index(("enter_rec_mode", "1024x0768"))
+    assert ordine[rientro + 1] == ("set_prop", "takemode", "M"), ordine    # prima la modalità, poi lo scatto
+
+
+def test_no_sequence_shot_while_a_settings_read_is_still_pending(seq_win, qapp):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    win._props_pending += 1                                  # come una lettura ancora in coda
+    prima = _scatti()
+    _attendi(qapp, lambda: False, 1.5)
+    assert _scatti() == prima
+    win.on_remote_props_failed("lettura non riuscita")       # la risposta arriva, anche se negativa
+    assert win._props_pending == 0
+    assert _attendi(qapp, lambda: _scatti() == prima + 1, 2.0)
+
+
+def test_the_sequence_ending_while_the_exit_question_is_open_leaves_no_stuck_state(
+        seq_win, qapp, monkeypatch):
+    win = seq_win
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+
+    def domanda_lenta(self, titolo, testo):
+        # mentre la domanda è aperta gli eventi girano: la sequenza finisce ed esce da sola
+        win._sequence.stop()
+        assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+        return True
+    monkeypatch.setattr(MainWindow, "_confirm", domanda_lenta)
+    win._view_grid.click()
+    assert not win._remote_active and not win._remote_leaving
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
+    assert _attendi(qapp, lambda: win._view_remote.isEnabled(), 5.0)
+    win._view_remote.click()                                 # si deve poter rientrare
+    assert _attendi(qapp, lambda: win._remote_entered, 5.0)
+    win._view_grid.click()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+
+
+def test_a_stale_leaving_flag_never_survives_into_a_new_session(seq_win, qapp):
+    win = seq_win
+    win._view_grid.click()
+    assert _attendi(qapp, lambda: not win._remote_active, 5.0)
+    win._remote_leaving = True                               # come lo lasciava il difetto
+    assert _attendi(qapp, lambda: win._view_remote.isEnabled(), 5.0)
+    win._view_remote.click()
+    assert _attendi(qapp, lambda: win._remote_entered, 5.0)
+
+
+def test_a_restart_within_the_settle_time_does_not_reuse_the_old_timer(seq_win, qapp, monkeypatch):
+    win = seq_win
+    monkeypatch.setattr(MainWindow, "SNAPSHOT_SETTLE", 0.6)
+    win._last_shot_end = _time.monotonic()
+    win.on_sequence_start(1, 300)                            # arma l'istantanea fra 0,6 s
+    _attendi(qapp, lambda: False, 0.4)
+    win.on_sequence_stop()
+    win._last_shot_end = _time.monotonic()                   # come uno scatto a mano appena finito
+    win.on_sequence_start(1, 300)
+    _attendi(qapp, lambda: False, 0.4)                       # il primo timer sarebbe scaduto qui
+    assert ("list_media", False) not in _RecordingClient.chiamate, "istantanea presa troppo presto"
+    assert _attendi(qapp, lambda: ("list_media", False) in _RecordingClient.chiamate, 2.0)
+
+
+def test_leaving_with_a_shot_in_flight_survives_its_late_answer(seq_win, qapp, monkeypatch):
+    win = seq_win
+    vero_scatto = _SequenceStubClient.take_picture
+
+    def scatto_lento(self, read_timeout=None):
+        _time.sleep(0.6)
+        vero_scatto(self, read_timeout)
+    monkeypatch.setattr(_SequenceStubClient, "take_picture", scatto_lento)
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: win._shot_in_flight)
+    win._view_grid.click()                                   # conferma: sì
+    assert not win._sequence.is_running()
+    assert _attendi(qapp, lambda: not win._remote_active, 6.0)
+    assert win._sequence_result is not None and win._sequence_result.taken == 0
+    assert not win._shot_in_flight and not win._remote_panel.sequence.is_running()

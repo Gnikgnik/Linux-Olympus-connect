@@ -157,6 +157,7 @@ class RemoteView(QWidget):
         self._fade.setEndValue(1.0)
         self._fade.start()
         if duration_ms is None:
+            self._restore_review_length()   # se un'anteprima accorciata era ancora a schermo
             self._review_timer.start()
         else:
             if self._review_restore is None:
@@ -322,10 +323,10 @@ class RemotePanel(QWidget):
         self.sequence = SequenceSection()
         colonna.addWidget(self.sequence)
 
-        suggerimento = QLabel("Clic sull'immagine per mettere a fuoco.")
-        suggerimento.setObjectName("faint")
-        suggerimento.setWordWrap(True)
-        colonna.addWidget(suggerimento)
+        self._hint = QLabel("Clic sull'immagine per mettere a fuoco.")
+        self._hint.setObjectName("faint")
+        self._hint.setWordWrap(True)
+        colonna.addWidget(self._hint)
         colonna.addStretch(1)
 
         self._recording = False
@@ -388,3 +389,4 @@ class RemotePanel(QWidget):
         self._movie.setEnabled(not self._busy and not self._sequence_running)
         self.props.set_enabled(libero)
         self.sequence.set_enabled(not self._busy and not self._recording)
+        self._hint.setVisible(not self._sequence_running)   # durante una sequenza i clic non contano

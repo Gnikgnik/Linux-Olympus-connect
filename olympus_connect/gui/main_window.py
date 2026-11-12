@@ -149,6 +149,13 @@ class MainWindow(QMainWindow):
         self._last_shot_end = 0.0                  # tempo monotonic della fine dell'ultimo scatto
         self._sequence_plan: SequencePlan | None = None
         self._sequence_preparing = False           # fra Avvia e l'istantanea dei nomi
+        # Letture e modifiche delle impostazioni ancora in coda nel worker: finché
+        # ce ne sono, il pannello non dice ancora il vero e la modalità scelta dal
+        # PC può non essere stata rimessa. Una sequenza non scatta nel frattempo.
+        self._props_pending = 0
+        self._snapshot_timer = QTimer(self)
+        self._snapshot_timer.setSingleShot(True)
+        self._snapshot_timer.timeout.connect(self._sequence_snapshot)
         self._sequence_before: set[str] | None = None
         self._sequence_result: SequenceResult | None = None
         self._sequence = SequenceController(self._sequence_ready,
@@ -1053,7 +1060,10 @@ class MainWindow(QMainWindow):
         self._live_restart_pending = False
         self._mode_to_restore = None
         self._live_down = None
+        self._remote_leaving = False       # mai ereditato da un'uscita precedente
         self._remote_props = {}
+        self._props_pending = 0
+        self._snapshot_timer.stop()
         self._sequence_preparing = False
         self._sequence_before = None
         self._sequence_result = None       # una sequenza mai scaricata si dimentica qui
@@ -1131,6 +1141,7 @@ class MainWindow(QMainWindow):
         self._remote_view.set_touch_area(area)
         self.statusBar().showMessage("Telecomando attivo.")
         if not (self._remote_leaving or self._closing):
+            self._props_pending += 1
             self.remote_read_props.emit()
 
     @pyqtSlot()
@@ -1335,6 +1346,7 @@ class MainWindow(QMainWindow):
             # risposta 200 con un corpo illeggibile: come una lettura fallita
             self.on_remote_props_failed("Elenco delle impostazioni illeggibile")
             return
+        self._props_pending = max(0, self._props_pending - 1)
         self._remote_panel.props.set_props(props)
         self._remote_props = props
         self._update_sequence_summary()
@@ -1348,6 +1360,8 @@ class MainWindow(QMainWindow):
     def on_remote_props_failed(self, message: str) -> None:
         if not self._remote_active:
             return
+        self._props_pending = max(0, self._props_pending - 1)
+        self._mode_to_restore = None        # senza l'elenco non si sa che modalità rimettere
         self._remote_panel.props.set_unavailable("Impostazioni non disponibili")
         self.statusBar().showMessage(message)
 
@@ -1360,6 +1374,7 @@ class MainWindow(QMainWindow):
                 or not self._remote_entered or self._remote_panel.is_recording()):
             return
         self.statusBar().showMessage("Impostazione inviata alla fotocamera…", 2000)
+        self._props_pending += 1            # set_prop rilegge sempre l'elenco: una risposta sola
         self.remote_set_prop.emit(name, value)
 
     # -- sequenze -------------------------------------------------------------
@@ -1391,7 +1406,8 @@ class MainWindow(QMainWindow):
         return (self._remote_active and self._remote_entered and not self._remote_leaving
                 and not self._closing and not self._shot_in_flight
                 and not self._remote_panel.is_recording()
-                and self._live_down is None and not self._live_restart_pending)
+                and self._live_down is None and not self._live_restart_pending
+                and self._props_pending == 0 and self._mode_to_restore is None)
 
     def on_sequence_start(self, interval: int, duration: int) -> None:
         if self._sequence.is_running() or self._sequence_preparing:
@@ -1407,7 +1423,7 @@ class MainWindow(QMainWindow):
         self._remote_panel.sequence.set_progress("Preparo la sequenza…", "")
         self.statusBar().showMessage("Sequenza: leggo la scheda…")
         attesa = max(0.0, self.SNAPSHOT_SETTLE - (time.monotonic() - self._last_shot_end))
-        QTimer.singleShot(int(attesa * 1000), self._sequence_snapshot)
+        self._snapshot_timer.start(int(attesa * 1000))
 
     def _sequence_snapshot(self) -> None:
         if (not self._sequence_preparing or not self._remote_active
@@ -1435,6 +1451,7 @@ class MainWindow(QMainWindow):
     def on_sequence_stop(self) -> None:
         if self._sequence_preparing:
             self._sequence_preparing = False
+            self._snapshot_timer.stop()         # un'istantanea in attesa non deve più partire
             self._remote_panel.set_sequence_running(False)
             self.statusBar().showMessage("Sequenza annullata.", 4000)
             return
@@ -1478,13 +1495,19 @@ class MainWindow(QMainWindow):
         if not self._remote_active or self._remote_leaving:
             return
         if self._sequence.is_running() or self._sequence_preparing:
-            if not self._confirm("Sequenza in corso",
-                                 "Uscendo dal telecomando la sequenza si fermerà. Uscire?"):
+            conferma = self._confirm("Sequenza in corso",
+                                     "Uscendo dal telecomando la sequenza si fermerà. Uscire?")
+            # La domanda fa girare gli eventi: mentre era aperta la sequenza può
+            # essere finita da sola, e l'uscita essere già partita o conclusa.
+            if not self._remote_active or self._remote_leaving:
+                return
+            if not conferma:
                 self._view_grid.setChecked(False)
                 self._view_table.setChecked(False)
                 self._view_remote.setChecked(True)
                 return
             self._sequence_preparing = False
+            self._snapshot_timer.stop()
             risultato = self._sequence.abort()
             self._remote_panel.set_sequence_running(False)
             if risultato is not None:
@@ -1509,6 +1532,8 @@ class MainWindow(QMainWindow):
         self._live_down = None
         self._mode_to_restore = None
         self._sequence_preparing = False
+        self._snapshot_timer.stop()
+        self._props_pending = 0
         residuo = self._sequence.abort()        # di norma è già ferma
         if residuo is not None and self._sequence_result is None:
             self._sequence_result = residuo
@@ -1588,6 +1613,7 @@ class MainWindow(QMainWindow):
                 return
             self._sequence_preparing = False
             self._sequence.abort()
+        self._snapshot_timer.stop()
         self._sequence_result = None
         self._closing = True
         self._stop_exposure()

@@ -246,3 +246,21 @@ def test_panel_cannot_start_a_sequence_while_busy_or_recording(qapp):
     assert not pannello.sequence._button.isEnabled()
     pannello.set_recording(False)
     assert pannello.sequence._button.isEnabled()
+
+
+def test_a_normal_review_right_after_a_short_one_has_its_normal_length(qapp):
+    vista = RemoteView()
+    vista._review_timer.setInterval(400)
+    vista.show_review(_jpeg(), 100)
+    vista.show_review(_jpeg())                       # uno scatto a mano mentre la prima è a schermo
+    assert vista._review_timer.interval() == 400
+    vista.clear()
+
+
+def test_the_focus_hint_hides_while_a_sequence_runs(qapp):
+    pannello = RemotePanel()
+    assert not pannello._hint.isHidden()
+    pannello.set_sequence_running(True)
+    assert pannello._hint.isHidden()
+    pannello.set_sequence_running(False)
+    assert not pannello._hint.isHidden()
