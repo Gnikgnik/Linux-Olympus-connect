@@ -171,7 +171,7 @@ class CollapsiblePanel(QFrame):
         outer.addWidget(self.body, 1)
         outer.addWidget(self._filler, 1)
 
-        self._animation = QPropertyAnimation(self, b"panelWidth")
+        self._animation = QPropertyAnimation(self, b"panelWidth", self)   # muore col pannello
         self._animation.setDuration(duration)
         # Ease-out: il movimento parte deciso e si posa, invece di accelerare
         # alla fine come farebbe una curva lineare o in-out.

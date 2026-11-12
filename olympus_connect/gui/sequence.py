@@ -115,6 +115,7 @@ class SpanStepper(QWidget):
             azione.setChecked(valore == self._current)
             azione.triggered.connect(lambda _c=False, v=valore: self.choose(v))
         menu.exec(self._button.mapToGlobal(self._button.rect().bottomLeft()))
+        menu.deleteLater()                  # un menu nuovo a ogni clic: questo non serve più
 
     def _refresh(self) -> None:
         self._button.setText(format_span(self._current))

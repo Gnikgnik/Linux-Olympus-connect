@@ -137,8 +137,8 @@ class MediaListModel(QAbstractTableModel):
     l'elenco dettagliato (QTreeView) mostra tutte le colonne e ordina.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
         self._all: list[Job] = []
         self._visible: list[Job] = []
         self._thumbnails: dict[str, QPixmap] = {}

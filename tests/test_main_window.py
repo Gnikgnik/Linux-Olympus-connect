@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QImage
 
 from olympus_connect.core.downloader import Job, JobState
 from olympus_connect.core.model import MediaFile, MediaKind
@@ -472,14 +473,16 @@ class _RecordingClient:
 
 
 def _jpeg_valido() -> bytes:
+    """Un JPEG vero. Con QImage e non con QPixmap: lo chiamano anche i client finti
+    dentro i thread dei worker, e una QPixmap fuori dal thread della GUI fa danni
+    che si vedono solo più tardi (un crash casuale della serie di test)."""
     from PyQt6.QtCore import QBuffer, QByteArray
-    from PyQt6.QtGui import QPixmap
-    pixmap = QPixmap(40, 30)
-    pixmap.fill()
+    immagine = QImage(40, 30, QImage.Format.Format_RGB32)
+    immagine.fill(0xFFFFFFFF)
     dati = QByteArray()
     buffer = QBuffer(dati)
     buffer.open(QBuffer.OpenModeFlag.WriteOnly)
-    pixmap.save(buffer, "JPEG")
+    immagine.save(buffer, "JPEG")
     return bytes(dati)
 
 
@@ -1213,7 +1216,9 @@ class _LongShotClient(_PropsStubClient):
 
 
 @pytest.fixture
-def long_win(qapp, settings):
+def long_win(qapp, settings, monkeypatch):
+    # chiudere durante una posa chiede conferma: qui sempre sì, la domanda bloccherebbe il test
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
     _RecordingClient.chiamate = []
     _FakeLive.istanze = []
     _PropsStubClient.valori = {"takemode": "M", "shutspeedvalue": '60"'}
@@ -1708,7 +1713,8 @@ def test_no_sequence_shot_while_a_settings_read_is_still_pending(seq_win, qapp):
     assert _scatti() == prima
     win.on_remote_props_failed("lettura non riuscita")       # la risposta arriva, anche se negativa
     assert win._props_pending == 0
-    assert _attendi(qapp, lambda: _scatti() == prima + 1, 2.0)
+    # dopo una lettura fallita la sequenza rilegge l'elenco prima di scattare di nuovo
+    assert _attendi(qapp, lambda: _scatti() == prima + 1, 6.0)
 
 
 def test_the_sequence_ending_while_the_exit_question_is_open_leaves_no_stuck_state(
@@ -2336,3 +2342,113 @@ def test_resume_after_a_pause_runs_the_download_off_the_window_thread(windows, q
     win.on_resume()
     assert _attendi(qapp, lambda: len(dove) == 2)
     assert dove[1] is not thread_della_finestra, "resume() è girato sul thread della finestra"
+
+
+# --- sequenze: casi dalla revisione finale ------------------------------------------------
+
+def test_a_failed_settings_read_after_a_reentry_never_lets_a_shot_go_in_the_wrong_mode(
+        seq_win, qapp, monkeypatch):
+    win = seq_win
+    monkeypatch.setattr(MainWindow, "PROPS_RETRY_MS", 300)
+    modi = []
+    letture = {"n": 0, "rotte": 0}
+
+    def enter_rec_mode(self, quality):
+        _RecordingClient.chiamate.append(("enter_rec_mode", quality))
+        _PropsStubClient.valori["takemode"] = "A"            # la ghiera fisica è su A
+
+    vera_lettura = _PropsStubClient.camera_props
+
+    def camera_props(self):
+        letture["n"] += 1
+        if any(c[0] == "enter_rec_mode" for c in _RecordingClient.chiamate[-3:]) \
+                and letture["rotte"] == 0:
+            letture["rotte"] += 1
+            raise RuntimeError("Wi-Fi: lettura persa")       # la prima lettura dopo il rientro
+        return vera_lettura(self)
+
+    vero_scatto = _SequenceStubClient.take_picture
+
+    def take_picture(self, read_timeout=None):
+        modi.append(_PropsStubClient.valori.get("takemode"))
+        if len(modi) == 1:
+            _FakeLive.istanze[-1].stalled.emit()             # posa lunga: il live si ferma
+        vero_scatto(self, read_timeout)
+
+    win._remote_panel.props.change("takemode", "M")
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode").confirmed_value() == "M")
+    monkeypatch.setattr(_SequenceStubClient, "enter_rec_mode", enter_rec_mode)
+    monkeypatch.setattr(_SequenceStubClient, "camera_props", camera_props)
+    monkeypatch.setattr(_SequenceStubClient, "take_picture", take_picture)
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: len(modi) >= 3, 15.0)
+    assert letture["rotte"] == 1, "la lettura rotta non è avvenuta: il test non prova niente"
+    assert modi[:3] == ["M", "M", "M"], modi
+
+
+def test_a_camera_that_refuses_the_mode_stops_shooting_instead_of_using_another(
+        seq_win, qapp, monkeypatch):
+    win = seq_win
+    win._remote_panel.props.change("takemode", "M")
+    assert _attendi(qapp, lambda: win._remote_panel.props.row("takemode").confirmed_value() == "M")
+    win.on_sequence_start(1, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+
+    def rifiuta(self, name, value):
+        _RecordingClient.chiamate.append(("set_prop", name, value))   # accetta e non fa niente
+    monkeypatch.setattr(_SequenceStubClient, "set_prop", rifiuta)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    prima = _scatti()
+    _PropsStubClient.valori["takemode"] = "A"
+    win.on_remote_entered("A", None)                         # come dopo un rientro
+    assert _attendi(qapp, lambda: "non torna in M" in win.statusBar().currentMessage(), 5.0)
+    _attendi(qapp, lambda: False, 1.5)
+    assert _scatti() == prima, "uno scatto è partito nella modalità sbagliata"
+    tentativi = [c for c in _RecordingClient.chiamate if c[:3] == ("set_prop", "takemode", "M")]
+    assert 1 <= len(tentativi) <= MainWindow.MAX_MODE_RESTORES + 1
+
+
+def test_a_failed_automatic_reentry_is_tried_again(seq_win, qapp, monkeypatch):
+    win = seq_win
+    monkeypatch.setattr(MainWindow, "REENTRY_RETRY_MS", 200)
+    win.on_sequence_start(5, 300)
+    assert _attendi(qapp, lambda: _scatti() >= 1)
+    assert _attendi(qapp, lambda: not win._shot_in_flight)
+    stato = {"n": 0}
+
+    def enter_rec_mode(self, quality):
+        stato["n"] += 1
+        _RecordingClient.chiamate.append(("enter_rec_mode", quality))
+        if stato["n"] == 1:
+            raise RuntimeError("rientro non riuscito")
+    monkeypatch.setattr(_SequenceStubClient, "enter_rec_mode", enter_rec_mode)
+    _FakeLive.istanze[-1].stalled.emit()
+    assert _attendi(qapp, lambda: stato["n"] == 2, 3.0), "nessun secondo tentativo"
+    assert _attendi(qapp, lambda: win._remote_entered, 3.0)
+    assert win._sequence.is_running()
+
+
+def test_closing_during_a_long_exposure_asks_first(long_win, qapp, monkeypatch):
+    win = long_win
+    domande = []
+    monkeypatch.setattr(MainWindow, "_confirm",
+                        lambda self, titolo, testo: domande.append((titolo, testo)) or False)
+    _posa(win, qapp)
+    assert win.close() is False and win.isVisible()
+    assert domande and domande[0][0] == "Posa in corso"
+    assert "resterà in modalità scatto" in domande[0][1]
+    monkeypatch.setattr(MainWindow, "_confirm", lambda self, titolo, testo: True)
+
+
+def test_the_pc_stays_awake_during_the_download_and_the_video(fine_win, qapp):
+    win = fine_win
+    dialog = _sequenza_fino_alla_finestra(win, qapp)
+    prima = len(_FintoBlocco.istanze)
+    dialog._download.click()
+    assert _attendi(qapp, lambda: len(_FintoBlocco.istanze) == prima + 1)
+    blocco = _FintoBlocco.istanze[-1]
+    assert blocco.eventi[0][0] == "start"
+    assert _attendi(qapp, lambda: len(_FintoMontaggio.istanze) == 1, 5.0)
+    assert blocco.eventi[-1][0] == "start"                   # ancora attivo durante il video
+    _FintoMontaggio.istanze[0].done.emit(str(_FintoMontaggio.istanze[0].out))
+    assert _attendi(qapp, lambda: blocco.eventi[-1] == ("stop",))

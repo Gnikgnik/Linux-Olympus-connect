@@ -41,7 +41,7 @@ class PreviewView(QLabel):
         self._placeholder = "Nessun file selezionato"
         self.setText(self._placeholder)
 
-        self._fade = QPropertyAnimation(self, b"fadeOpacity")
+        self._fade = QPropertyAnimation(self, b"fadeOpacity", self)   # muore con la vista
         self._fade.setDuration(theme.DURATION)
         self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
 

@@ -157,6 +157,7 @@ class PropStepper(QWidget):
             azione.setChecked(valore == self._shown)
             azione.triggered.connect(lambda _c=False, v=valore: self.choose(v))
         menu.exec(self._value.mapToGlobal(self._value.rect().bottomLeft()))
+        menu.deleteLater()                  # un menu nuovo a ogni clic: questo non serve più
 
     def _send(self) -> None:
         if self._automatic or not self.isEnabled():

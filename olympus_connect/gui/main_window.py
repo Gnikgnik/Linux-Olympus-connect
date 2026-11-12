@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self._snapshot_timer.timeout.connect(self._sequence_snapshot)
         self._sequence_before: set[str] | None = None
         self._sequence_result: SequenceResult | None = None
+        self._inhibitor_factory = inhibitor_factory
         self._sequence = SequenceController(self._sequence_ready,
                                             inhibitor=inhibitor_factory(), parent=self)
         self._sequence.shoot_requested.connect(self._sequence_shoot)
@@ -181,12 +182,22 @@ class MainWindow(QMainWindow):
         self._sequence_end_before: set[str] | None = None
         self._sequence_end_known: set[str] | None = None
         self._sequence_missing = 0                 # foto della sequenza non scaricate
+        # La modalità con cui la sequenza è partita. Ogni rientro nel live rimette
+        # quella della ghiera: finché un elenco letto dopo il rientro non la
+        # conferma, la sequenza non scatta.
+        self._sequence_mode: str | None = None
+        self._props_fresh = False                  # elenco letto dopo l'ultimo ingresso
+        self._mode_restores = 0                    # tentativi di rimettere la modalità, di fila
+        self._transfer_inhibitor = None            # PC sveglio durante scarico e video
         self._sequence_dialog: SequenceEndDialog | None = None
         self._sequence_offer: tuple | None = None  # (foto, risultato) mentre la finestra è aperta
         self._sequence_job: SequenceJob | None = None
         self._timelapse_worker: TimelapseWorker | None = None
 
-        self._model = MediaListModel()
+        # Figlio della finestra: muore con lei, e con lui le animazioni delle
+        # miniature. Senza genitore lo distruggerebbe la raccolta dei rifiuti di
+        # Python in un momento qualunque, anche dentro un passo di animazione.
+        self._model = MediaListModel(self)
         self._grid = MediaGrid(self._model)
         self._table = MediaTable(self._model)
         self._table.size_columns()
@@ -1020,6 +1031,7 @@ class MainWindow(QMainWindow):
             return
         if self._download_worker is not None:
             self._download_worker.cancel()
+        self._keep_awake(False)                     # c'è qualcuno: ha appena premuto Annulla
         self._show_transfer(True, con_riprova=True)
         self._cancel_button.setEnabled(False)
         self._suspend_thumbnails(False)
@@ -1036,6 +1048,8 @@ class MainWindow(QMainWindow):
         # azzerano il flag; impostarlo dopo lo lascerebbe vero per sempre.
         self._downloading = True
         self._update_remote_button()
+        if self._sequence_job is not None:
+            self._keep_awake(True)
         # Sul thread del worker: chiamato da qui, il trasferimento girerebbe sul
         # thread della finestra e la bloccherebbe fino alla fine.
         QMetaObject.invokeMethod(self._download_worker, "resume",
@@ -1195,6 +1209,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str, object)
     def on_remote_entered(self, mode: str, area: object) -> None:
         self._remote_entered = True
+        self._props_fresh = False           # la modalità può essere tornata quella della ghiera
         if self._live_worker is not None and not (self._remote_leaving or self._closing):
             # arm() è partito prima che il rientro fosse eseguito: se il rientro ha
             # impiegato più di 3 s, la sentinella scatterebbe a vuoto. Si riparte da qui.
@@ -1316,6 +1331,18 @@ class MainWindow(QMainWindow):
         elif mostrato:
             self._remote_view.show_message("")
 
+    REENTRY_RETRY_MS = 3000
+
+    def _retry_reentry(self) -> None:
+        if (not self._sequence.is_running() or self._remote_entered or not self._remote_active
+                or self._remote_leaving or self._closing):
+            return
+        if self._auto_reentries >= self.MAX_AUTO_REENTRIES:
+            self._remote_view.show_message(self._LIVE_STUCK, retry=True)
+            return
+        self._auto_reentries += 1
+        self.on_live_retry()
+
     def _restart_live_after_shot(self) -> None:
         """Fine dell'anteprima dopo uno scatto col live fermo: lo fa ripartire
         come Riprova. Se nel frattempo il live è tornato da solo, niente."""
@@ -1426,6 +1453,11 @@ class MainWindow(QMainWindow):
             self._remote_view.set_af_result(False)
         if not self._remote_entered or not self._remote_view.has_frame():
             self._remote_view.show_message(message, retry=True)
+        if (not era_scatto and not self._remote_entered and self._sequence.is_running()
+                and self._remote_active and not self._remote_leaving and not self._closing):
+            # Un rientro automatico non è riuscito: la sentinella del live ha già
+            # avvisato e non lo farà più. Un altro tentativo fra poco, nel limite.
+            QTimer.singleShot(self.REENTRY_RETRY_MS, self._retry_reentry)
         if era_scatto:
             self._sequence.shot_done(False)
             # Il live si è perso durante lo scatto, e lo scatto è fallito: la
@@ -1446,12 +1478,26 @@ class MainWindow(QMainWindow):
         self._props_pending = max(0, self._props_pending - 1)
         self._remote_panel.props.set_props(props)
         self._remote_props = props
+        self._props_fresh = True
         self._update_sequence_summary()
         voluta, self._mode_to_restore = self._mode_to_restore, None
+        in_sequenza = self._sequence.is_running() and self._sequence_mode is not None
+        if in_sequenza:
+            voluta = self._sequence_mode    # vale sempre, anche se il rientro non l'ha ricordata
         modo = props.get("takemode")
         if (voluta and modo is not None and modo.value != voluta and voluta in modo.values
                 and not self._remote_leaving and not self._closing):
+            if in_sequenza:
+                self._mode_restores += 1
+                if self._mode_restores > self.MAX_MODE_RESTORES:
+                    # La fotocamera rifiuta: meglio fermarsi che scattare in un'altra
+                    # modalità. La sequenza resta non pronta e si chiude da sola.
+                    self.statusBar().showMessage(
+                        f"La fotocamera non torna in {voluta}: la sequenza non scatta.")
+                    return
             self._remote_panel.props.change("takemode", voluta)
+        elif in_sequenza and modo is not None and modo.value == voluta:
+            self._mode_restores = 0
 
     @pyqtSlot(str)
     def on_remote_props_failed(self, message: str) -> None:
@@ -1459,8 +1505,22 @@ class MainWindow(QMainWindow):
             return
         self._props_pending = max(0, self._props_pending - 1)
         self._mode_to_restore = None        # senza l'elenco non si sa che modalità rimettere
+        self._props_fresh = False
         self._remote_panel.props.set_unavailable("Impostazioni non disponibili")
         self.statusBar().showMessage(message)
+        if self._sequence.is_running():
+            # Senza l'elenco la sequenza non sa in che modalità è la fotocamera:
+            # si rilegge fra poco, invece di scattare alla cieca.
+            QTimer.singleShot(self.PROPS_RETRY_MS, self._reread_props)
+
+    PROPS_RETRY_MS = 2000
+
+    def _reread_props(self) -> None:
+        if (not self._sequence.is_running() or not self._remote_active or not self._remote_entered
+                or self._remote_leaving or self._closing or self._props_pending):
+            return
+        self._props_pending += 1
+        self.remote_read_props.emit()
 
     @pyqtSlot(object)
     def on_lens_changed(self, limits: object) -> None:
@@ -1505,7 +1565,17 @@ class MainWindow(QMainWindow):
                 and not self._remote_panel.is_recording()
                 and self._live_down is None and not self._live_restart_pending
                 and self._props_pending == 0 and self._mode_to_restore is None
-                and not self._live_paused)
+                and not self._live_paused and self._sequence_mode_ok())
+
+    MAX_MODE_RESTORES = 3       # tentativi di fila di rimettere la modalità della sequenza
+
+    def _sequence_mode_ok(self) -> bool:
+        """Durante una sequenza: la fotocamera è nella modalità di partenza,
+        secondo un elenco letto dopo l'ultimo ingresso in modalità scatto."""
+        if self._sequence_mode is None:
+            return True
+        modo = self._remote_props.get("takemode") if self._props_fresh else None
+        return modo is not None and modo.value == self._sequence_mode
 
     def on_sequence_start(self, interval: int, duration: int) -> None:
         if self._sequence.is_running() or self._sequence_preparing:
@@ -1540,6 +1610,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Sequenza non avviata: il telecomando non è pronto.")
             return
         self._sequence_before = names
+        modo = self._remote_props.get("takemode")
+        self._sequence_mode = modo.value if modo is not None else None
+        self._mode_restores = 0
         bloccato = self._sequence.start(self._sequence_plan,
                                         shot_busy_seconds(self._remote_props))
         self.statusBar().showMessage(
@@ -1576,6 +1649,7 @@ class MainWindow(QMainWindow):
         """Finita, fermata o interrotta: si esce dal telecomando; l'elenco che
         segue l'uscita dirà quali foto sono della sequenza."""
         self._remote_panel.set_sequence_running(False)
+        self._sequence_mode = None
         if result is None:
             return
         self._keep_sequence_end(result)
@@ -1652,6 +1726,17 @@ class MainWindow(QMainWindow):
         self._sequence_job = SequenceJob(cartella, [lavoro.dest for lavoro in lavori],
                                          scelta.video, scelta.resolution, scelta.fps)
         self._start_download(lavori, mark_model=False)
+        self._keep_awake(True)              # dopo una sequenza lunga l'utente può essere via
+
+    def _keep_awake(self, attivo: bool) -> None:
+        """Tiene sveglio il PC durante scarico e video di una sequenza."""
+        if self._transfer_inhibitor is not None:
+            self._transfer_inhibitor.stop()
+            self._transfer_inhibitor = None
+        if attivo:
+            blocco = self._inhibitor_factory()
+            if blocco.start(6 * 3600):
+                self._transfer_inhibitor = blocco
 
     def _after_sequence_download(self, lavoro: SequenceJob) -> None:
         presenti = [p for p in lavoro.frames if p.exists()]
@@ -1659,10 +1744,12 @@ class MainWindow(QMainWindow):
         mancanti = (f" ({self._sequence_missing} non scaricate)"
                     if self._sequence_missing else "")
         if not lavoro.video:
+            self._keep_awake(False)
             self.statusBar().showMessage(
                 f"Sequenza scaricata: {len(presenti)} foto in {lavoro.folder}{mancanti}")
             return
         if len(presenti) < 2:
+            self._keep_awake(False)
             self.statusBar().showMessage(
                 "Sequenza scaricata, ma per il video servono almeno due foto.")
             return
@@ -1689,6 +1776,7 @@ class MainWindow(QMainWindow):
 
     def _timelapse_over(self, messaggio: str) -> None:
         self._timelapse_worker = None
+        self._keep_awake(False)
         self._update_remote_button()
         self._file_label.setText("")
         self._total_bar.setValue(0)
@@ -1806,6 +1894,8 @@ class MainWindow(QMainWindow):
         self._live_paused = False
         self._live_waking = False
         self._pause_after_stall = False
+        self._sequence_mode = None
+        self._props_fresh = False
         residuo = self._sequence.abort()        # di norma è già ferma
         if residuo is not None and self._sequence_result is None:
             self._keep_sequence_end(residuo)
@@ -1891,15 +1981,24 @@ class MainWindow(QMainWindow):
         Chiudere durante un trasferimento e' il caso normale, non un caso
         limite: la fotocamera e' lenta e l'utente se ne va.
         """
-        if self._sequence.is_running() or self._sequence_preparing:
-            if not self._confirm("Sequenza in corso",
-                                 "Chiudendo il programma la sequenza si fermerà. Chiudere?"):
+        in_sequenza = self._sequence.is_running() or self._sequence_preparing
+        posa = self._shot_in_flight and self._exposure_shown
+        if in_sequenza or posa:
+            # Durante uno scatto il comando di uscita resta in coda dietro di lui e
+            # non parte più: la fotocamera rimane in modalità scatto.
+            testo = "Chiudendo il programma la sequenza si fermerà." if in_sequenza else ""
+            if self._shot_in_flight:
+                testo += (" Uno scatto è in corso: la fotocamera resterà in modalità scatto"
+                          " (spegnila e riaccendila).")
+            if not self._confirm("Sequenza in corso" if in_sequenza else "Posa in corso",
+                                 testo.strip() + " Chiudere?"):
                 event.ignore()
                 return
             self._sequence_preparing = False
             self._sequence.abort()
         self._snapshot_timer.stop()
         self._sequence_result = None
+        self._keep_awake(False)
         self._closing = True
         self._stop_exposure()
         self._close_deadline = time.monotonic() + 3.0      # una scadenza per tutto

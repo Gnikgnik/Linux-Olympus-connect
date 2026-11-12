@@ -8,8 +8,8 @@ accetta la messa a fuoco col tocco.
 from __future__ import annotations
 
 from PyQt6.QtCore import (
-    QElapsedTimer, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer,
-    pyqtProperty, pyqtSignal,
+    QElapsedTimer, QEasingCurve, QRectF, QSize, Qt, QTimer, QVariantAnimation,
+    pyqtSignal,
 )
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
@@ -91,20 +91,17 @@ class RemoteView(QWidget):
         self._review_timer.timeout.connect(self._end_review)
         self._review_restore: int | None = None     # durata normale, da rimettere
 
-        self._fade = QPropertyAnimation(self, b"reviewOpacity", self)
+        # Un'animazione di valori, non di una proprietà Python: se la vista
+        # sparisce durante la dissolvenza, Qt scollega il segnale da solo, mentre
+        # una QPropertyAnimation scriverebbe su un oggetto Python già distrutto.
+        self._fade = QVariantAnimation(self)
         self._fade.setDuration(theme.DURATION)
         self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._fade.valueChanged.connect(self._set_review_opacity)
 
-    # -- proprietà animata ----------------------------------------------------
-
-    def _get_review_opacity(self) -> float:
-        return self._review_opacity
-
-    def _set_review_opacity(self, value: float) -> None:
-        self._review_opacity = value
+    def _set_review_opacity(self, value) -> None:
+        self._review_opacity = float(value)
         self.update()
-
-    reviewOpacity = pyqtProperty(float, fget=_get_review_opacity, fset=_set_review_opacity)
 
     # -- contenuto ------------------------------------------------------------
 
