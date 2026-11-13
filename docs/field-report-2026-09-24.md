@@ -482,3 +482,19 @@ Script `tools/prova_sequenza.py`, senza Internet, ghiera su A, tempo 1/250, scat
 | | 5 minuti con il live spento, nessuna richiesta | nessun pacchetto; `startliveview` risponde in 0,35 s, live dopo 0,37 s, scatto riuscito in 0,6 s |
 
 La modalità dopo la riaccensione era quella di prima, ma la prova non cambia modalità: resta da verificare con l'app che una modalità scelta dal PC sopravviva a `stopliveview`/`startliveview` (il rientro play→rec, invece, la riporta alla ghiera). Lo script, in questa prima versione, scriveva «completo dopo gli scatti: sì» anche con l'ultimo scatto mancante: il controllo è stato corretto dopo la prova.
+
+## Sequenze con l'app (2026-11-13)
+
+Prova con l'app (`OLYMPUS_DEBUG=1`, registro in `diag-downloads/prova_app_sequenze.txt`), ghiera su A, RAW+JPEG con JPEG da circa 9,7 MB.
+
+| Prova | Esito |
+|---|---|
+| 1. Intervallo 2 s per 5 min | ✅ 150 scatti, intervallo medio 2,00 s (da 1,74 a 2,25). Scaricati 150 JPEG (circa 2 s l'uno) in `Sequenza 2026-11-13 20.00`, e `timelapse.mp4`: 1920×1080, 25 fps, 150 fotogrammi, 6 s, BT.709. |
+| 2. M, 15", intervallo 5 s per 5 min | ❌ La sequenza non è partita: nel registro solo uno scatto singolo (`starttake` chiesto alle 20:13:02, risposta dopo 33 s: posa più fotogramma scuro) e nessuna istantanea della scheda. Il «secondo scatto» sentito durante il conto alla rovescia è il fotogramma scuro della riduzione rumore. Da capire perché «Avvia sequenza» non è partito (ipotesi: con un tempo lungo in M il live diventa lentissimo e l'app lo tratta come interrotto, quindi «non pronto»). |
+| 3. M, intervallo 2 min per 15 min | ✅ 8 scatti, ciascuno all'istante dovuto (20:15:06 … 20:29:06). Fra gli scatti `stopliveview`; `startliveview` 5 s prima di ognuno, sempre senza rientro in modalità scatto; il pannello è rimasto in M (riferito dall'utente). |
+| 4. Intervallo 15 min per 30 min | ✅ 2 scatti; dopo 15 minuti a live spento `startliveview` risponde subito; uscita automatica dopo l'ultimo scatto. |
+| 5. Arresti | ✅ «Ferma sequenza» dopo 7 scatti e uscita a metà dopo 4: in entrambi i casi uscita dal telecomando con la sequenza chiusa. |
+| 6. Scatto a mano prima di Avvia | non eseguita |
+| Chiusura durante una posa (8") | ✅ conferma chiesta; dopo la chiusura la fotocamera era libera (riferito dall'utente). |
+
+Uscendo dal telecomando subito dopo uno scatto, `switch_cammode?mode=play` risponde 520 (la fotocamera sta ancora scrivendo la foto); il passaggio in riproduzione dell'elenco, 2,5 s dopo, risponde 200. Nessun effetto per l'utente.
