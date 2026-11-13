@@ -40,7 +40,7 @@ L'applicazione ufficiale vede **2 file su 1161**. Chi scatta in RAW non ha nessu
 | Dati di scatto prima di scaricare | ✅ tempo, diaframma, ISO, focale, obiettivo e altri, da `get_exif.cgi` (verificato sui RAW; JPEG e video da verificare) |
 | Telecomando: live, messa a fuoco col tocco, scatto, video | ✅ live a 1024×768 e 30 fotogrammi/s, nessuna regola del firewall |
 | Impostazioni dal PC: modalità, tempo, diaframma, ISO, compensazione, bilanciamento, scatto, filtri | ✅ diaframma limitato all'obiettivo e allo zoom; pose lunghe fino a 60" con conto alla rovescia |
-| Sequenze di scatti a intervalli (intervallometro), scarico dei JPEG in una cartella dedicata e video timelapse | da verificare sul campo: i comandi sono misurati (ciclo di scatto 1 s, live che si spegne e si riaccende in 0,3 s), la funzione nell'app non ancora |
+| Sequenze di scatti a intervalli (intervallometro), scarico dei JPEG in una cartella dedicata e video timelapse | ✅ da 2 s a 15 min fra gli scatti, anche con pose lunghe; live in pausa negli intervalli lunghi |
 | Richieste `Range` (ripresa) | ❌ **non supportate**: risponde `200` senza `Content-Range` |
 | `set_timeout.cgi` (keep-alive) | ❌ dichiarato ma risponde `520` / `errorcode 1006` |
 | `get_unusedcapacity.cgi` | ❌ restituisce `0xFFFFFFFF`, sentinella di «non disponibile» |
@@ -162,7 +162,7 @@ Fuori scope anche la sincronizzazione dell'orologio e il log GPS, entrambi raggi
 .venv/bin/python -m pytest
 ```
 
-789 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
+791 test, nessuno dei quali richiede la fotocamera collegata. Alcuni girano contro l'output **reale** registrato dalla fotocamera in `tests/fixtures/`, incluso uno che fa passare tutti i 1161 file attraverso il client e ne verifica la ripartizione per tipo.
 
 Il test più importante è `test_download_recovers_from_drop_at_half_without_range`: un server locale chiude la connessione a metà del corpo **e** ignora il `Range`, cioè riproduce esattamente il comportamento di questa fotocamera. Verifica che il recupero produca un file corretto invece di un file corrotto.
 

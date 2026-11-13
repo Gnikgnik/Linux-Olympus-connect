@@ -1549,8 +1549,10 @@ class MainWindow(QMainWindow):
 
     def _update_sequence_summary(self) -> None:
         sezione = self._remote_panel.sequence
-        sezione.set_summary(sezione.plan().summary(shot_busy_seconds(self._remote_props),
-                                                   self._sequence_fps()))
+        piano = sezione.plan()
+        occupata = shot_busy_seconds(self._remote_props)
+        sezione.set_summary(piano.summary(occupata, self._sequence_fps()),
+                            warning=piano.cycle(occupata) > piano.interval)
 
     def _on_sequence_changed(self) -> None:
         sezione = self._remote_panel.sequence

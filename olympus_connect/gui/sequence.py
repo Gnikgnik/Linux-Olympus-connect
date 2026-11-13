@@ -172,8 +172,16 @@ class SequenceSection(QWidget):
     def plan(self) -> SequencePlan:
         return SequencePlan(self.interval(), self.duration())
 
-    def set_summary(self, text: str) -> None:
+    def set_summary(self, text: str, warning: bool = False) -> None:
+        """`warning`: il riepilogo avvisa di qualcosa (la posa più lunga
+        dell'intervallo) e si vede come un avviso, non come una nota."""
         self._summary.setText(text)
+        self._summary.setObjectName("warn" if warning else "faint")
+        self._summary.style().unpolish(self._summary)
+        self._summary.style().polish(self._summary)
+
+    def summary_is_warning(self) -> bool:
+        return self._summary.objectName() == "warn"
 
     def summary_text(self) -> str:
         return self._summary.text()

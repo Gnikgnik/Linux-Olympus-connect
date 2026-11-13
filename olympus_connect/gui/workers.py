@@ -302,6 +302,8 @@ class RemoteWorker(QObject):
     # Sotto questa occupazione stimata lo scatto non si annuncia: con 2" sul
     # campo starttake è tornato dopo circa 2 s e tutto ha funzionato.
     EXPOSING_FROM = 2.0
+    PLAY_ATTEMPTS = 3           # passaggio in riproduzione all'uscita
+    PLAY_RETRY_DELAY = 0.8      # secondi fra un tentativo e l'altro
 
     def __init__(self, client, quality: str = LIVE_QUALITY) -> None:
         super().__init__()
@@ -441,11 +443,20 @@ class RemoteWorker(QObject):
                 pass
             self._recording = False
             self._movie_attempted = False
-        for passo in (self._client.stop_liveview, self._client.ensure_play_mode):
+        try:
+            self._client.stop_liveview()
+        except Exception:
+            pass
+        # Subito dopo uno scatto la fotocamera rifiuta il passaggio in
+        # riproduzione (HTTP 520) finché non ha finito di scrivere la foto:
+        # visto sul campo il 2026-11-13 con JPEG da 10 MB. Si riprova poco dopo.
+        for tentativo in range(self.PLAY_ATTEMPTS):
             try:
-                passo()
+                self._client.ensure_play_mode()
+                break
             except Exception:
-                pass
+                if tentativo + 1 < self.PLAY_ATTEMPTS:
+                    time.sleep(self.PLAY_RETRY_DELAY)
         self.left.emit()
 
 

@@ -1102,3 +1102,29 @@ def test_timelapse_cancel_does_not_wait_for_ffmpeg_to_finish(qapp, tmp_path):
     worker.run()
     assert time.monotonic() - inizio < 5
     assert ev["cancelled"] == 1 and not (cartella / "timelapse.mp4.part").exists()
+
+
+def test_remote_leave_retries_play_while_the_camera_is_still_writing(qapp, monkeypatch):
+    # sul campo: subito dopo uno scatto mode=play risponde 520, poco dopo riesce
+    monkeypatch.setattr(RemoteWorker, "PLAY_RETRY_DELAY", 0.01)
+    client = _RemoteClient()
+    tentativi = {"n": 0}
+
+    def ensure_play_mode():
+        tentativi["n"] += 1
+        client.calls.append(("ensure_play_mode",))
+        if tentativi["n"] == 1:
+            raise CameraNotReachable("520: sta scrivendo")
+    client.ensure_play_mode = ensure_play_mode
+    worker, ev = _remote(client)
+    worker.leave()
+    assert tentativi["n"] == 2 and ev["left"] == [True]
+
+
+def test_remote_leave_gives_up_on_play_after_a_few_attempts(qapp, monkeypatch):
+    monkeypatch.setattr(RemoteWorker, "PLAY_RETRY_DELAY", 0.01)
+    client = _RemoteClient(fail={"ensure_play_mode": CameraNotReachable("x")})
+    worker, ev = _remote(client)
+    worker.leave()
+    assert [c[0] for c in client.calls].count("ensure_play_mode") == RemoteWorker.PLAY_ATTEMPTS
+    assert ev["left"] == [True]

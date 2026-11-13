@@ -1504,6 +1504,11 @@ def test_the_summary_follows_the_exposure_read_from_the_camera(seq_win, qapp):
     win.remote_read_props.emit()
     assert _attendi(qapp, lambda: sezione.summary_text() == (
         "la posa dura più dell'intervallo: scatti uno dopo l'altro, circa 15 in 30 min"))
+    assert sezione.summary_is_warning()                    # sul campo, in grigio, non si notava
+    _PropsStubClient.valori = {"takemode": "M", "shutspeedvalue": "250"}
+    win.remote_read_props.emit()
+    assert _attendi(qapp, lambda: sezione.summary_text().startswith("360 scatti"))
+    assert not sezione.summary_is_warning()
 
 
 def test_start_takes_the_snapshot_then_shoots_at_the_interval(seq_win, qapp):
